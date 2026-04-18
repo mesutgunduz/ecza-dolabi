@@ -11,7 +11,7 @@ import { parseITSBarcode } from '../utils/barcodeParser';
 import { searchBarcodeFromAPI } from '../utils/api';
 import { parseMedicineTextFromOCR } from '../utils/ocrParser';
 import { requestNotificationPermissions, scheduleMedReminders, cancelMedReminders } from '../utils/notifications';
-import { Plus, Trash2, Edit2, X, Check, Pill, Search, Bell, Scan, ScanSearch } from 'lucide-react-native';
+import { Plus, Trash2, Edit2, X, Check, Pill, Search, Bell, Scan, ScanSearch, Clock, AlertCircle } from 'lucide-react-native';
 
 const defaultBarcodeMeta = { gtin: '', serial: '', batch: '' };
 
@@ -158,7 +158,9 @@ export default function MedsScreen() {
       const hasPerm = await requestNotificationPermissions();
       if (hasPerm && medData.name) {
         const all = await getMeds();
-        const current = all.find(m => m.name === name);
+        const current = editingMed
+          ? all.find(m => m.id === editingMed.id)
+          : [...all].reverse().find(m => m.name === name);
         if (current) await scheduleMedReminders(current);
       }
 
@@ -174,7 +176,10 @@ export default function MedsScreen() {
   const handleDelete = (id) => {
     const performDelete = async () => {
       try {
-        await cancelMedReminders(id);
+        const medToDelete = meds.find(m => m.id === id);
+        if (medToDelete) {
+          await cancelMedReminders(medToDelete);
+        }
         await editMed(id, { isActive: false });
         Alert.alert('Başarılı', 'İlaç dolaptan kaldırıldı.');
         loadData();
@@ -216,6 +221,8 @@ export default function MedsScreen() {
       return 'ok';
     }
   };
+
+  const expiredMeds = meds.filter(med => med.expiryDate && checkExpiryStatus(med.expiryDate) === 'expired');
 
   const openBarcodeScanner = () => {
     setCameraMode('barcode');
@@ -377,6 +384,23 @@ export default function MedsScreen() {
         />
       </View>
 
+      {expiredMeds.length > 0 && (
+        <View style={styles.alertPanel}>
+          <View style={styles.alertHeader}>
+            <AlertCircle color="#fff" size={18} />
+            <Text style={styles.alertTitle}>SKT'SI GECEN ILACLAR VAR!</Text>
+          </View>
+          {expiredMeds.map(med => (
+            <View key={med.id} style={styles.alertItem}>
+              <Text style={styles.alertItemName}>{med.name} - SKT: {med.expiryDate}</Text>
+              <TouchableOpacity onPress={() => handleDelete(med.id)} style={styles.alertDeleteBtn}>
+                <Text style={styles.alertDeleteText}>Sil</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+
       <FlatList
         data={meds.filter(m => (m.name || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')))}
         keyExtractor={item => item.id}
@@ -390,6 +414,21 @@ export default function MedsScreen() {
                 </View>
               </View>
               <Text style={styles.subText}>Kalan: {item.quantity} {item.unit} | Doz: {item.consumePerUsage}</Text>
+              <Text style={styles.ownerLine}>
+                Kisi: {item.personId === 'all' ? 'Ortak' : (persons.find(p => p.id === item.personId)?.name || 'Bilinmeyen')}
+              </Text>
+
+              {Array.isArray(item.reminderTimes) && item.reminderTimes.filter(Boolean).length > 0 && (
+                <View style={styles.reminderRow}>
+                  {item.reminderTimes.filter(Boolean).map((t, idx) => (
+                    <View key={`${item.id}-time-${idx}`} style={styles.timeTag}>
+                      <Clock size={11} color="#059669" />
+                      <Text style={styles.timeTagText}>{t}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
               {item.expiryDate ? (
                 <Text style={[styles.dateText, checkExpiryStatus(item.expiryDate) === 'expired' && styles.expiredText]}>
                   SKT: {item.expiryDate}
@@ -483,7 +522,7 @@ export default function MedsScreen() {
                       value={time}
                       onChangeText={(val) => {
                         const newTimes = [...reminderTimes];
-                        newTimes[index] = val;
+                        newTimes[index] = val.replace('.', ':');
                         setReminderTimes(newTimes);
                       }}
                       maxLength={5}
@@ -538,6 +577,13 @@ const styles = StyleSheet.create({
   addBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 4 },
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', margin: 16, marginBottom: 0, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', height: 44 },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 15, color: '#111827' },
+  alertPanel: { backgroundColor: '#EF4444', marginHorizontal: 16, marginTop: 12, borderRadius: 12, overflow: 'hidden' },
+  alertHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#DC2626' },
+  alertTitle: { color: '#fff', fontWeight: 'bold', marginLeft: 8, fontSize: 12 },
+  alertItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.25)' },
+  alertItemName: { color: '#fff', fontSize: 12, flex: 1, marginRight: 8 },
+  alertDeleteBtn: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  alertDeleteText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, flexDirection: 'row', alignItems: 'center', elevation: 2 },
   content: { flex: 1 },
   medHeader: { flexDirection: 'row', alignItems: 'center' },
@@ -545,6 +591,10 @@ const styles = StyleSheet.create({
   badge: { marginLeft: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   badgeText: { fontSize: 10, fontWeight: 'bold' },
   subText: { fontSize: 13, color: '#6B7280', marginTop: 2 },
+  ownerLine: { fontSize: 12, color: '#4B5563', marginTop: 4 },
+  reminderRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
+  timeTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 6 },
+  timeTagText: { fontSize: 11, color: '#047857', fontWeight: '700', marginLeft: 4 },
   dateText: { fontSize: 11, color: '#9CA3AF', marginTop: 4 },
   expiredText: { color: '#EF4444', fontWeight: 'bold' },
   actions: { flexDirection: 'row' },
