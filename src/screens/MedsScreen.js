@@ -1,330 +1,528 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, Modal, ScrollView, Alert } from 'react-native';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import {
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  Alert, Modal, TextInput, ScrollView, Platform, ActivityIndicator
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { searchMedicineFromAPI, searchBarcodeFromAPI } from '../utils/api';
-import { getMeds, addMed, deleteMed, editMed, getPersons } from '../utils/storage';
-import { Search, Plus, Trash2, X, User, Edit3, QrCode, Edit2 } from 'lucide-react-native';
+import { CameraView } from 'expo-camera';
+import Constants from 'expo-constants';
+import { getMeds, getPersons, addMed, editMed, getBarcodeCatalogEntry, saveBarcodeCatalogEntry } from '../utils/storage';
+import { parseITSBarcode } from '../utils/barcodeParser';
+import { searchBarcodeFromAPI } from '../utils/api';
+import { parseMedicineTextFromOCR } from '../utils/ocrParser';
+import { requestNotificationPermissions, scheduleMedReminders, cancelMedReminders } from '../utils/notifications';
+import { Plus, Trash2, Edit2, X, Check, Pill, Search, Bell, Scan, ScanSearch } from 'lucide-react-native';
+
+const defaultBarcodeMeta = { gtin: '', serial: '', batch: '' };
 
 export default function MedsScreen() {
+  const cameraRef = useRef(null);
+
   const [meds, setMeds] = useState([]);
-  const [filteredMeds, setFilteredMeds] = useState([]);
-  const [cabinetSearchQuery, setCabinetSearchQuery] = useState('');
   const [persons, setPersons] = useState([]);
-  
+  const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  
-  const [manualMode, setManualMode] = useState(false);
-  const [editingMedId, setEditingMedId] = useState(null); // Edit mod
-  const [customName, setCustomName] = useState('');
-  const [customGeneric, setCustomGeneric] = useState('');
-  const [customDose, setCustomDose] = useState('');
-  
-  const [formType, setFormType] = useState('Tablet');
-  const [quantity, setQuantity] = useState('20');
+  const [editingMed, setEditingMed] = useState(null);
+
+  const [name, setName] = useState('');
+  const [personId, setPersonId] = useState('all');
+  const [quantity, setQuantity] = useState('');
+  const [unit, setUnit] = useState('Adet');
   const [consumePerUsage, setConsumePerUsage] = useState('1');
-  const [selectedPerson, setSelectedPerson] = useState(null);
+  const [dailyDose, setDailyDose] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
+  const [formType, setFormType] = useState('Tablet');
+  const [reminderTimes, setReminderTimes] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [barcodeMeta, setBarcodeMeta] = useState(defaultBarcodeMeta);
 
-  const [permission, requestPermission] = useCameraPermissions();
-  const [scannerVisible, setScannerVisible] = useState(false);
-  const [scanned, setScanned] = useState(false);
+  const [cameraVisible, setCameraVisible] = useState(false);
+  const [cameraMode, setCameraMode] = useState('barcode');
+  const [ocrLoading, setOcrLoading] = useState(false);
 
-  const getUnitFromForm = (form) => {
-    const fLower = form.toLocaleLowerCase('tr-TR');
-    if (fLower.includes('şurup') || fLower.includes('süspansiyon')) return 'ml';
-    if (fLower.includes('damla')) return 'damla';
-    if (fLower.includes('krem') || fLower.includes('merhem') || fLower.includes('jel')) return 'gr';
-    return 'Adet';
-  };
+  useEffect(() => {
+    const dose = parseInt(dailyDose, 10) || 0;
+    setReminderTimes(prev => {
+      const next = [...prev];
+      if (next.length < dose) {
+        for (let i = next.length; i < dose; i++) next.push('');
+      } else if (next.length > dose) {
+        return next.slice(0, dose);
+      }
+      return next;
+    });
+  }, [dailyDose]);
 
   const loadData = async () => {
-    const medsData = await getMeds();
-    const personsData = await getPersons();
-    setMeds(medsData);
-    setFilteredMeds(medsData);
-    setPersons(personsData);
-    if (!selectedPerson) setSelectedPerson('all');
+    try {
+      setLoading(true);
+      const m = await getMeds();
+      const p = await getPersons();
+      setMeds(m.filter(med => med.isActive !== false));
+      setPersons(p);
+    } catch (e) {
+      console.error('Load Data Error:', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useFocusEffect(useCallback(() => { loadData(); }, []));
 
-  const handleCabinetSearch = (text) => {
-    setCabinetSearchQuery(text);
-    if (!text) { setFilteredMeds(meds); return; }
-    const lowerText = text.toLocaleLowerCase('tr-TR');
-    setFilteredMeds(meds.filter(m => 
-      m.name.toLocaleLowerCase('tr-TR').includes(lowerText) ||
-      (m.genericName && m.genericName.toLocaleLowerCase('tr-TR').includes(lowerText))
-    ));
-  };
-
-  const handleApiSearch = async (text) => {
-    setSearchQuery(text);
-    if (text.length >= 2) {
-      const results = await searchMedicineFromAPI(text);
-      setSearchResults(results);
+  const handleTypeChange = (type) => {
+    setFormType(type);
+    if (type === 'Şurup') {
+      setUnit('ml');
+      setConsumePerUsage('5');
     } else {
-      setSearchResults([]);
+      setUnit('Adet');
+      setConsumePerUsage('1');
     }
   };
 
-  const startManualWithAPI = (item) => {
-    setCustomName(item.name);
-    setCustomGeneric(item.genericName);
-    setFormType(item.form);
-    if (item.form.toLocaleLowerCase('tr-TR').includes('şurup')) {
-      setQuantity('150'); setConsumePerUsage('5');
+  const resetForm = () => {
+    setEditingMed(null);
+    setName('');
+    setPersonId('all');
+    setQuantity('');
+    setUnit('Adet');
+    setConsumePerUsage('1');
+    setDailyDose('');
+    setExpiryDate('');
+    setFormType('Tablet');
+    setReminderTimes([]);
+    setBarcodeMeta(defaultBarcodeMeta);
+  };
+
+  const openForm = (med = null) => {
+    if (med) {
+      setEditingMed(med);
+      setName(med.name || '');
+      setPersonId(med.personId || 'all');
+      setQuantity(med.quantity?.toString() || '');
+      setUnit(med.unit || 'Adet');
+      setConsumePerUsage(med.consumePerUsage?.toString() || '1');
+      setDailyDose(med.dailyDose?.toString() || '');
+      setExpiryDate(med.expiryDate || '');
+      setFormType(med.form || 'Tablet');
+      setReminderTimes(med.reminderTimes || []);
+      setBarcodeMeta({
+        gtin: med.gtin || '',
+        serial: med.serial || '',
+        batch: med.batch || '',
+      });
     } else {
-      setQuantity('20'); setConsumePerUsage('1');
+      resetForm();
     }
-    setManualMode(true);
-  };
 
-  const startEmptyManual = () => {
-    setCustomName(searchQuery);
-    setManualMode(true);
-  };
-
-  const handleEditPress = (item) => {
-    setEditingMedId(item.id);
-    setCustomName(item.name);
-    setCustomGeneric(item.genericName || '');
-    setCustomDose(item.dose || '');
-    setFormType(item.form || 'Tablet');
-    setQuantity(item.quantity ? item.quantity.toString() : '20');
-    setConsumePerUsage(item.consumePerUsage ? item.consumePerUsage.toString() : '1');
-    if (item.personId) setSelectedPerson(item.personId);
-    
-    setManualMode(true);
     setModalVisible(true);
   };
 
-  const saveMedFinal = async () => {
-    if (!selectedPerson) { alert("Önce kişi seçin!"); return; }
-    if (!customName.trim()) { alert("İlaç ismi girmelisiniz."); return; }
+  const handleSave = async () => {
+    if (!name || !quantity) {
+      Alert.alert('Hata', 'Gerekli alanları doldurun.');
+      return;
+    }
 
-    const payload = {
-      name: customName,
+    const medData = {
+      name,
+      personId,
+      quantity: quantity.toString(),
+      unit,
+      consumePerUsage,
+      dailyDose: dailyDose || null,
+      expiryDate,
       form: formType,
-      genericName: customGeneric,
-      dose: customDose,
-      quantity: quantity,
-      consumePerUsage: consumePerUsage,
-      unit: getUnitFromForm(formType),
-      personId: selectedPerson
+      reminderTimes,
+      gtin: barcodeMeta?.gtin || '',
+      serial: barcodeMeta?.serial || '',
+      batch: barcodeMeta?.batch || '',
     };
 
-    if (editingMedId) {
-      await editMed(editingMedId, payload);
-    } else {
-      await addMed(payload);
-    }
+    try {
+      if (editingMed) {
+        await editMed(editingMed.id, medData);
+      } else {
+        await addMed(medData);
+      }
 
-    setModalVisible(false);
-    resetModal();
-    loadData();
-  };
+      if (barcodeMeta?.gtin && name.trim()) {
+        await saveBarcodeCatalogEntry(barcodeMeta.gtin, {
+          name: name.trim(),
+          form: formType,
+          unit,
+          consumePerUsage,
+        });
+      }
 
-  const resetModal = () => {
-    setSearchQuery(''); setSearchResults([]); setManualMode(false);
-    setCustomName(''); setCustomGeneric(''); setCustomDose('');
-    setQuantity('20'); setConsumePerUsage('1'); setFormType('Tablet');
-    setEditingMedId(null);
-  };
+      const hasPerm = await requestNotificationPermissions();
+      if (hasPerm && medData.name) {
+        const all = await getMeds();
+        const current = all.find(m => m.name === name);
+        if (current) await scheduleMedReminders(current);
+      }
 
-  const handleDelete = async (id) => { await deleteMed(id); loadData(); };
-
-  const getPersonName = (id) => {
-    if (id === 'all' || !id) return '🏠 Ev / Ortak';
-    const p = persons.find(p => p.id === id); return p ? p.name : '🏠 Ev / Ortak';
-  };
-
-  const handleBarcodeIconPress = async () => {
-    if (!permission) await requestPermission();
-    if (permission && !permission.granted) await requestPermission();
-    setScanned(false);
-    setScannerVisible(true);
-  };
-
-  const handleBarCodeScanned = async ({ type, data }) => {
-    if (scanned) return;
-    setScanned(true);
-    setScannerVisible(false);
-    
-    const result = await searchBarcodeFromAPI(data);
-    if (result) {
-      startManualWithAPI(result);
-    } else {
-      Alert.alert("Bulunamadı", "Bu barkod bulunamadı. Lütfen ilacın ismini elle giriniz.");
-      setSearchQuery(data);
+      setModalVisible(false);
+      resetForm();
+      loadData();
+    } catch (e) {
+      console.error('Save med failed:', e);
+      Alert.alert('Hata', 'İşlem başarısız.');
     }
   };
+
+  const handleDelete = (id) => {
+    const performDelete = async () => {
+      try {
+        await cancelMedReminders(id);
+        await editMed(id, { isActive: false });
+        Alert.alert('Başarılı', 'İlaç dolaptan kaldırıldı.');
+        loadData();
+      } catch (e) {
+        console.error('Delete med failed:', e);
+        Alert.alert('Hata', 'İşlem yapılamadı.');
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm('Bu ilacı dolaptan kaldırmak istiyor musunuz?')) performDelete();
+    } else {
+      Alert.alert('İlacı Sil', 'Bu ilacı dolaptan kaldırmak istiyor musunuz?', [
+        { text: 'Vazgeç', style: 'cancel' },
+        { text: 'Sil', style: 'destructive', onPress: performDelete },
+      ]);
+    }
+  };
+
+  const checkExpiryStatus = (dateStr) => {
+    if (!dateStr) return 'ok';
+
+    try {
+      const parts = dateStr.split(/[.\-/]/).map(Number);
+      let exp;
+      if (parts.length === 3) {
+        let [d, m, y] = parts;
+        if (y < 100) y += 2000;
+        exp = new Date(y, m - 1, d);
+      } else if (parts.length === 2) {
+        let [m, y] = parts;
+        if (y < 100) y += 2000;
+        exp = new Date(y, m, 0, 23, 59, 59);
+      } else {
+        return 'ok';
+      }
+      return exp.getTime() < new Date().getTime() ? 'expired' : 'ok';
+    } catch (e) {
+      return 'ok';
+    }
+  };
+
+  const openBarcodeScanner = () => {
+    setCameraMode('barcode');
+    setCameraVisible(true);
+  };
+
+  const openOCRScanner = () => {
+    setCameraMode('ocr');
+    setCameraVisible(true);
+  };
+
+  const applyMedicineLookup = (lookup, parsed) => {
+    const nextName = lookup?.name || name;
+    const nextForm = lookup?.form || formType;
+    const nextExpiry = lookup?.expiryDate || parsed?.expiryDate || expiryDate;
+    const nextMeta = {
+      gtin: lookup?.gtin || parsed?.gtin || '',
+      serial: lookup?.serial || parsed?.serial || '',
+      batch: lookup?.batch || parsed?.batch || '',
+    };
+
+    if (nextName) setName(nextName);
+    if (nextExpiry) setExpiryDate(nextExpiry);
+    setBarcodeMeta(nextMeta);
+
+    if (nextForm === 'Şurup') {
+      handleTypeChange('Şurup');
+    } else if (lookup?.form) {
+      handleTypeChange('Tablet');
+    }
+
+    if (lookup?.unit) setUnit(lookup.unit);
+    if (lookup?.consumePerUsage) setConsumePerUsage(String(lookup.consumePerUsage));
+  };
+
+  const handleBarcodeScanned = async ({ data }) => {
+    setCameraVisible(false);
+
+    try {
+      const parsed = parseITSBarcode(data);
+      const catalogEntry = parsed?.gtin ? await getBarcodeCatalogEntry(parsed.gtin) : null;
+      const lookup = catalogEntry || await searchBarcodeFromAPI(data);
+
+      if (!parsed && !lookup) {
+        Alert.alert('Hata', 'Karekod anlaşılamadı. Lütfen tekrar deneyin.');
+        return;
+      }
+
+      applyMedicineLookup(lookup, parsed);
+
+      const filledFields = [];
+      if ((lookup?.name || name)) filledFields.push('ilaç adı');
+      if ((lookup?.expiryDate || parsed?.expiryDate || expiryDate)) filledFields.push('son kullanma tarihi');
+
+      Alert.alert(
+        'Başarılı',
+        catalogEntry
+          ? 'Bu barkod daha önce kaydedilmiş. İlaç adı otomatik dolduruldu.'
+          : filledFields.length
+            ? `Karekod okundu. Doldurulan alanlar: ${filledFields.join(', ')}.`
+            : 'Karekod okundu.'
+      );
+    } catch (error) {
+      console.error('Barcode scan failed:', error);
+      Alert.alert('Hata', 'Karekod işlendi ama bilgiler alınamadı.');
+    }
+  };
+
+  const takeOCRPhoto = async () => {
+    try {
+      setOcrLoading(true);
+      const photo = await cameraRef.current?.takePictureAsync({ quality: 0.7 });
+      setCameraVisible(false);
+
+      if (!photo?.uri) {
+        Alert.alert('Hata', 'Fotoğraf alınamadı.');
+        return;
+      }
+
+      if (Constants.appOwnership === 'expo') {
+        Alert.alert(
+          'Development Build Gerekli',
+          'OCR özelliği Expo Go içinde çalışmaz. Bu özellik için development build ile açmanız gerekir.'
+        );
+        return;
+      }
+
+      let recognizeText;
+      try {
+        ({ recognizeText } = await import('@infinitered/react-native-mlkit-text-recognition'));
+      } catch (error) {
+        Alert.alert(
+          'Development Build Gerekli',
+          'OCR özelliği Expo Go içinde çalışmaz. Bu özellik için development build ile açmanız gerekir.'
+        );
+        return;
+      }
+
+      if (typeof recognizeText !== 'function') {
+        Alert.alert(
+          'Development Build Gerekli',
+          'OCR özelliği Expo Go içinde çalışmaz. Bu özellik için development build ile açmanız gerekir.'
+        );
+        return;
+      }
+
+      const result = await recognizeText(photo.uri);
+      const parsed = parseMedicineTextFromOCR(result?.text || '');
+
+      if (!parsed) {
+        Alert.alert('Bilgi Bulunamadı', 'Kutudan anlamlı ilaç adı okunamadı. Işığı artırıp kutunun ön yüzünü tekrar çekin.');
+        return;
+      }
+
+      if (parsed.name) setName(parsed.name);
+      if (parsed.expiryDate && !expiryDate) setExpiryDate(parsed.expiryDate);
+      if (parsed.form === 'Şurup') handleTypeChange('Şurup');
+
+      const fields = [];
+      if (parsed.name) fields.push('ilaç adı');
+      if (parsed.expiryDate) fields.push('son kullanma tarihi');
+
+      Alert.alert(
+        'OCR Tamamlandı',
+        fields.length
+          ? `Kutudan şu alanlar okundu: ${fields.join(', ')}.`
+          : 'Metin okundu ancak alan doldurulamadı.'
+      );
+    } catch (error) {
+      console.error('OCR failed:', error);
+      Alert.alert('Hata', 'OCR işlemi başarısız oldu.');
+    } finally {
+      setOcrLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
+  }
 
   return (
     <View style={styles.container}>
-      {scannerVisible && (
-        <Modal visible={scannerVisible} transparent={false} animationType="slide">
-           <View style={{ flex: 1, backgroundColor: 'black' }}>
-             <CameraView
-               onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
-               barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8", "qr", "upc_a"] }}
-               style={StyleSheet.absoluteFillObject}
-             />
-             <View style={styles.scannerOverlayInfo}>
-               <Text style={styles.scannerOverlayText}>İlacın Barkodunu veya Karekodunu Okutun</Text>
-             </View>
-             <TouchableOpacity style={styles.closeScannerBtn} onPress={() => setScannerVisible(false)}>
-               <X color="#fff" size={30} />
-             </TouchableOpacity>
-           </View>
-        </Modal>
-      )}
-
-      <View style={styles.headerArea}>
-        <View style={styles.cabSearchSection}>
-          <Search color="#6b7280" size={20} style={{marginLeft: 10}}/>
-          <TextInput
-            style={styles.cabSearchInput}
-            placeholder="Dolaptan ilaç ara..."
-            value={cabinetSearchQuery}
-            onChangeText={handleCabinetSearch}
-          />
-        </View>
-        <TouchableOpacity style={styles.openModalBtn} onPress={() => {resetModal(); setModalVisible(true);}}>
+      <View style={styles.header}>
+        <Pill color="#059669" size={24} />
+        <Text style={styles.title}>İlaç Dolabım</Text>
+        <TouchableOpacity style={styles.addBtn} onPress={() => openForm()}>
           <Plus color="#fff" size={20} />
+          <Text style={styles.addBtnText}>Ekle</Text>
         </TouchableOpacity>
       </View>
 
+      <View style={styles.searchContainer}>
+        <Search color="#9CA3AF" size={20} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="İlaç ismine göre ara..."
+          value={searchTerm}
+          onChangeText={setSearchTerm}
+        />
+      </View>
+
       <FlatList
-        data={filteredMeds}
+        data={meds.filter(m => (m.name || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')))}
         keyExtractor={item => item.id}
         renderItem={({ item }) => (
           <View style={styles.card}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.name}>{item.name} {item.dose && <Text style={styles.doseTxt}>({item.dose})</Text>}</Text>
-              <Text style={styles.detail}>{item.form} | Kalan: {item.quantity} {item.unit || 'Adet'} (-{item.consumePerUsage || 1})</Text>
-              <View style={styles.personTag}>
-                <User color="#059669" size={12} />
-                <Text style={styles.personTagText}>{getPersonName(item.personId)}</Text>
+            <View style={styles.content}>
+              <View style={styles.medHeader}>
+                <Text style={styles.medName}>{item.name}</Text>
+                <View style={[styles.badge, { backgroundColor: item.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5' }]}>
+                  <Text style={[styles.badgeText, { color: item.form === 'Şurup' ? '#DB2777' : '#059669' }]}>{item.form || 'Tablet'}</Text>
+                </View>
               </View>
+              <Text style={styles.subText}>Kalan: {item.quantity} {item.unit} | Doz: {item.consumePerUsage}</Text>
+              {item.expiryDate ? (
+                <Text style={[styles.dateText, checkExpiryStatus(item.expiryDate) === 'expired' && styles.expiredText]}>
+                  SKT: {item.expiryDate}
+                </Text>
+              ) : null}
             </View>
-            <View style={{flexDirection: 'row'}}>
-              <TouchableOpacity onPress={() => handleEditPress(item)} style={styles.actionBtn}>
-                <Edit2 color="#3B82F6" size={20} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.actionBtn}>
-                <Trash2 color="#EF4444" size={20} />
-              </TouchableOpacity>
+            <View style={styles.actions}>
+              <TouchableOpacity onPress={() => openForm(item)} style={styles.actionBtn}><Edit2 color="#3B82F6" size={18} /></TouchableOpacity>
+              <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.actionBtn}><Trash2 color="#EF4444" size={18} /></TouchableOpacity>
             </View>
           </View>
         )}
-        ListEmptyComponent={<Text style={styles.emptyText}>Aradığınız ilaç dolapta bulunamadı.</Text>}
+        ListEmptyComponent={<Text style={styles.empty}>Dolapta ilaç bulunamadı.</Text>}
+        contentContainerStyle={{ padding: 16 }}
       />
 
-      <Modal visible={modalVisible} animationType="slide" presentationStyle="pageSheet">
-        <View style={styles.modalContainer}>
+      <Modal visible={modalVisible} animationType="slide">
+        <View style={styles.modal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
-              {editingMedId ? "İlacı Düzenle" : (manualMode ? "İlaç Detayları" : "Yeni İlaç Bul / Ekle")}
-            </Text>
-            <TouchableOpacity onPress={() => setModalVisible(false)}>
-              <X color="#111827" size={24} />
-            </TouchableOpacity>
+            <Text style={styles.modalTitle}>{editingMed ? 'Düzenle' : 'Yeni İlaç'}</Text>
+            <TouchableOpacity onPress={() => setModalVisible(false)}><X color="#000" size={24} /></TouchableOpacity>
           </View>
 
-          <ScrollView style={{flex: 1}} showsVerticalScrollIndicator={false}>
-            {!manualMode && !editingMedId ? (
-              <View>
-                <Text style={styles.label}>Önce İlacı Bulalım (İsim veya Barkod):</Text>
-                <View style={styles.searchRowWithBarcode}>
-                  <TextInput
-                    style={styles.bigSearchInputRow}
-                    placeholder="Örn: Ritalin, Attex, vb."
-                    value={searchQuery}
-                    onChangeText={handleApiSearch}
-                  />
-                  <TouchableOpacity style={styles.barcodeBtn} onPress={handleBarcodeIconPress}>
-                    <QrCode color="#fff" size={24} />
-                  </TouchableOpacity>
-                </View>
-                
-                {searchResults.length > 0 && <Text style={styles.subLabel}>Sonuçlardan Seçip Ekle:</Text>}
+          <ScrollView style={{ padding: 16 }}>
+            <View style={styles.scanActions}>
+              <TouchableOpacity style={styles.scanBtn} onPress={openBarcodeScanner}>
+                <Scan color="#fff" size={20} />
+                <Text style={styles.scanBtnText}>Karekod Oku</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.scanBtn, styles.ocrBtn]} onPress={openOCRScanner}>
+                <ScanSearch color="#fff" size={20} />
+                <Text style={styles.scanBtnText}>Kutudan Oku</Text>
+              </TouchableOpacity>
+            </View>
 
-                {searchResults.map((item) => (
-                  <TouchableOpacity key={item.id} style={styles.searchItemCard} onPress={() => startManualWithAPI(item)}>
-                    <Text style={styles.searchItemName}>{item.name}</Text>
-                    <Text style={styles.searchItemDesc}>{item.form} - {item.genericName}</Text>
-                  </TouchableOpacity>
-                ))}
+            <Text style={styles.label}>İlaç Adı</Text>
+            <TextInput style={styles.input} value={name} onChangeText={setName} />
 
-                <TouchableOpacity style={styles.manualFallbackBtn} onPress={startEmptyManual}>
-                  <Edit3 color="#059669" size={18} />
-                  <Text style={styles.manualFallbackBtnText}>Aradığım listede yok, ilacın tüm bilgilerini elimle yazacağım.</Text>
-                </TouchableOpacity>
+            <View style={styles.row}>
+              <TouchableOpacity style={[styles.typeBtn, formType === 'Tablet' && styles.typeBtnActive]} onPress={() => handleTypeChange('Tablet')}>
+                <Text style={[styles.typeBtnText, formType === 'Tablet' && styles.typeBtnTextActive]}>Tablet</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.typeBtn, formType === 'Şurup' && styles.typeBtnActive]} onPress={() => handleTypeChange('Şurup')}>
+                <Text style={[styles.typeBtnText, formType === 'Şurup' && styles.typeBtnTextActive]}>Şurup</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.row}>
+              <View style={styles.halfField}>
+                <Text style={styles.label}>Stok</Text>
+                <TextInput style={styles.input} keyboardType="numeric" value={quantity} onChangeText={setQuantity} />
               </View>
-            ) : (
-              <View>
-                <Text style={styles.label}>Bu ilaç kimin için?</Text>
-                <View style={styles.personSelectionRow}>
-                  <TouchableOpacity 
-                    style={[styles.personChip, selectedPerson === 'all' && styles.personChipSelected]}
-                    onPress={() => setSelectedPerson('all')}
-                  >
-                    <Text style={[styles.personChipText, selectedPerson === 'all' && styles.personChipTextSelected]}>🏠 Ev (Ortak)</Text>
-                  </TouchableOpacity>
-                  {persons.map(p => (
-                    <TouchableOpacity 
-                      key={p.id} 
-                      style={[styles.personChip, selectedPerson === p.id && styles.personChipSelected]}
-                      onPress={() => setSelectedPerson(p.id)}
-                    >
-                      <Text style={[styles.personChipText, selectedPerson === p.id && styles.personChipTextSelected]}>{p.name}</Text>
-                    </TouchableOpacity>
+              <View style={styles.halfField}>
+                <Text style={styles.label}>Birim</Text>
+                <TextInput style={[styles.input, styles.readonlyInput]} editable={false} value={unit} />
+              </View>
+            </View>
+
+            <Text style={styles.label}>Kime Ait?</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
+              <TouchableOpacity style={[styles.chip, personId === 'all' && styles.chipActive]} onPress={() => setPersonId('all')}>
+                <Text style={[styles.chipText, personId === 'all' && styles.chipTextActive]}>Ortak</Text>
+              </TouchableOpacity>
+              {persons.map(p => (
+                <TouchableOpacity key={p.id} style={[styles.chip, personId === p.id && styles.chipActive]} onPress={() => setPersonId(p.id)}>
+                  <Text style={[styles.chipText, personId === p.id && styles.chipTextActive]}>{p.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={styles.row}>
+              <View style={styles.halfField}>
+                <Text style={styles.label}>Günlük Doz</Text>
+                <TextInput style={styles.input} keyboardType="numeric" placeholder="Örn: 3" value={dailyDose} onChangeText={setDailyDose} />
+              </View>
+              <View style={styles.halfField}>
+                <Text style={styles.label}>SKT (GG.AA.YYYY)</Text>
+                <TextInput style={styles.input} placeholder="31.12.2026" value={expiryDate} onChangeText={setExpiryDate} />
+              </View>
+            </View>
+
+            {reminderTimes.length > 0 && (
+              <View style={styles.reminderBox}>
+                <Text style={styles.label}><Bell size={14} color="#374151" /> Alarm Saatleri</Text>
+                <View style={styles.timesWrap}>
+                  {reminderTimes.map((time, index) => (
+                    <TextInput
+                      key={index}
+                      style={styles.timeInput}
+                      placeholder="09:00"
+                      value={time}
+                      onChangeText={(val) => {
+                        const newTimes = [...reminderTimes];
+                        newTimes[index] = val;
+                        setReminderTimes(newTimes);
+                      }}
+                      maxLength={5}
+                    />
                   ))}
                 </View>
-
-                <Text style={styles.label}>İlaç Adı:</Text>
-                <TextInput style={styles.input} value={customName} onChangeText={setCustomName} placeholder="Örn: Ritalin" />
-
-                <View style={{flexDirection:'row', justifyContent:'space-between'}}>
-                  <View style={{flex: 1, marginRight: 10}}>
-                    <Text style={styles.label}>Form/Tür:</Text>
-                    <TextInput style={styles.input} value={formType} onChangeText={(txt) => {
-                      setFormType(txt);
-                      if(txt.toLocaleLowerCase('tr-TR').includes('şurup') && consumePerUsage==='1') setConsumePerUsage('5');
-                    }} placeholder="Tablet, Şurup, Merhem" />
-                  </View>
-                  <View style={{flex: 1}}>
-                    <Text style={styles.label}>Özellik/Mg:</Text>
-                    <TextInput style={styles.input} value={customDose} onChangeText={setCustomDose} placeholder="Örn: 10mg" />
-                  </View>
-                </View>
-
-                <View style={styles.calcBox}>
-                  <Text style={styles.calcBoxTitle}>Miktar ve Tüketim Hesaplaması ({getUnitFromForm(formType)})</Text>
-                  
-                  <View style={styles.calcRow}>
-                    <Text style={styles.calcLabel}>Mevcut Kutu Miktarı{"\n"}(Örn: Şurup ise 150):</Text>
-                    <TextInput style={styles.qtyInput} keyboardType="numeric" value={quantity} onChangeText={setQuantity} />
-                  </View>
-
-                  <View style={styles.calcRow}>
-                    <Text style={styles.calcLabel}>"İçildi" butonuna basınca düşülecek miktar (Örn: 5):</Text>
-                    <TextInput style={styles.qtyInput} keyboardType="numeric" value={consumePerUsage} onChangeText={setConsumePerUsage} />
-                  </View>
-                </View>
-
-                <TouchableOpacity style={[styles.finalSaveBtn, editingMedId && {backgroundColor: '#3B82F6'}]} onPress={saveMedFinal}>
-                  <Text style={styles.finalSaveBtnText}>{editingMedId ? 'Güncellemeyi Kaydet' : 'Dolaba Kaydet'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.backBtn} onPress={() => setModalVisible(false)}>
-                  <Text style={styles.backBtnText}>İptal</Text>
-                </TouchableOpacity>
+                <Text style={styles.infoSmall}>Format: 09:00, 14:30 vb.</Text>
               </View>
             )}
+
+            <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+              <Check color="#fff" size={24} />
+              <Text style={styles.saveBtnText}>Kaydet</Text>
+            </TouchableOpacity>
           </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal visible={cameraVisible} animationType="slide">
+        <View style={styles.cameraModal}>
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            onBarcodeScanned={cameraMode === 'barcode' ? handleBarcodeScanned : undefined}
+            barcodeScannerSettings={{ barcodeTypes: ['datamatrix', 'qr', 'code128', 'ean13', 'ean8'] }}
+          />
+          <View style={styles.scannerOverlay}>
+            <View style={styles.scannerCutout} />
+            {cameraMode === 'ocr' ? (
+              <TouchableOpacity style={styles.captureBtn} onPress={takeOCRPhoto} disabled={ocrLoading}>
+                {ocrLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.captureBtnText}>Fotoğraf Çek</Text>}
+              </TouchableOpacity>
+            ) : (
+              <Text style={styles.overlayHint}>Karekod çerçeveye girince otomatik okunur</Text>
+            )}
+            <TouchableOpacity style={styles.closeScan} onPress={() => setCameraVisible(false)}>
+              <Text style={styles.closeScanText}>Vazgeç</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
     </View>
@@ -332,56 +530,58 @@ export default function MedsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6' },
-  headerArea: { flexDirection: 'row', backgroundColor: '#fff', padding: 16, alignItems: 'center', elevation: 2 },
-  cabSearchSection: { flex: 1, flexDirection: 'row', backgroundColor: '#f3f4f6', borderRadius: 8, alignItems: 'center', height: 44 },
-  cabSearchInput: { flex: 1, paddingHorizontal: 10, fontSize: 16 },
-  openModalBtn: { backgroundColor: '#059669', width: 44, height: 44, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginLeft: 12 },
-  card: { flexDirection: 'row', backgroundColor: '#fff', padding: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb', alignItems: 'center' },
-  name: { fontSize: 16, fontWeight: 'bold', color: '#111827' },
-  doseTxt: { fontSize: 14, fontWeight: 'normal', color: '#6b7280' },
-  detail: { fontSize: 14, color: '#6b7280', marginTop: 4, fontWeight: 'bold' },
-  personTag: { flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: '#ECFDF5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
-  personTagText: { fontSize: 12, color: '#059669', marginLeft: 4, fontWeight: 'bold' },
-  actionBtn: { padding: 8, marginLeft: 5 },
-  emptyText: { textAlign: 'center', color: '#6b7280', marginTop: 40 },
-  
-  modalContainer: { flex: 1, backgroundColor: '#f3f4f6', paddingTop: 30, paddingHorizontal: 16 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#111827' },
-  label: { fontSize: 14, fontWeight: 'bold', color: '#374151', marginBottom: 8, marginTop: 10 },
-  subLabel: { fontSize: 12, color: '#6b7280', marginTop: 16, marginBottom: 8, fontWeight: 'bold' },
-
-  searchRowWithBarcode: { flexDirection: 'row', alignItems: 'center' },
-  bigSearchInputRow: { flex: 1, backgroundColor: '#fff', paddingHorizontal: 16, borderRadius: 8, fontSize: 16, height: 50, borderWidth: 1, borderColor: '#d1d5db' },
-  barcodeBtn: { backgroundColor: '#000', width: 50, height: 50, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginLeft: 10 },
-
-  searchItemCard: { backgroundColor: '#fff', padding: 16, borderRadius: 8, marginBottom: 10, borderLeftWidth: 4, borderLeftColor: '#3B82F6' },
-  searchItemName: { fontSize: 16, fontWeight: 'bold', color: '#111827' },
-  searchItemDesc: { fontSize: 12, color: '#6b7280', marginTop: 2 },
-  manualFallbackBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', padding: 16, borderRadius: 8, marginTop: 20, borderWidth: 1, borderColor: '#A7F3D0', borderStyle: 'dashed' },
-  manualFallbackBtnText: { color: '#059669', fontWeight: 'bold', marginLeft: 8, flex: 1 },
-
-  personSelectionRow: { flexDirection: 'row', flexWrap: 'wrap' },
-  personChip: { backgroundColor: '#e5e7eb', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, marginRight: 8, marginBottom: 8 },
-  personChipSelected: { backgroundColor: '#059669' },
-  personChipText: { color: '#374151', fontWeight: 'bold' },
-  personChipTextSelected: { color: '#ffffff' },
-
-  input: { backgroundColor: '#fff', paddingHorizontal: 12, borderRadius: 6, fontSize: 15, height: 44, borderWidth: 1, borderColor: '#d1d5db' },
-
-  calcBox: { backgroundColor: '#E0F2FE', padding: 16, borderRadius: 8, marginTop: 20, borderWidth: 1, borderColor: '#BAE6FD' },
-  calcBoxTitle: { fontSize: 14, fontWeight: 'bold', color: '#0284C7', marginBottom: 12 },
-  calcRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  calcLabel: { flex: 1, fontSize: 13, color: '#0369A1', paddingRight: 10 },
-  qtyInput: { width: 70, height: 40, backgroundColor: '#fff', textAlign: 'center', borderRadius: 6, fontWeight: 'bold', borderWidth: 1, borderColor: '#7DD3FC' },
-  
-  finalSaveBtn: { backgroundColor: '#059669', padding: 16, borderRadius: 8, marginTop: 30, alignItems: 'center' },
-  finalSaveBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  backBtn: { padding: 16, alignItems: 'center', marginTop: 5 },
-  backBtnText: { color: '#6b7280', textDecorationLine: 'underline' },
-
-  closeScannerBtn: { position: 'absolute', top: 50, right: 30, backgroundColor: 'rgba(0,0,0,0.5)', padding: 10, borderRadius: 50 },
-  scannerOverlayInfo: { position: 'absolute', bottom: 100, left: 0, right: 0, alignItems: 'center' },
-  scannerOverlayText: { color: '#fff', fontSize: 16, fontWeight: 'bold', backgroundColor: 'rgba(0,0,0,0.7)', padding: 12, borderRadius: 8 }
+  container: { flex: 1, backgroundColor: '#F9FAFB' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  header: { padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  title: { fontSize: 18, fontWeight: 'bold' },
+  addBtn: { backgroundColor: '#059669', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  addBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 4 },
+  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', margin: 16, marginBottom: 0, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', height: 44 },
+  searchInput: { flex: 1, marginLeft: 8, fontSize: 15, color: '#111827' },
+  card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, flexDirection: 'row', alignItems: 'center', elevation: 2 },
+  content: { flex: 1 },
+  medHeader: { flexDirection: 'row', alignItems: 'center' },
+  medName: { fontSize: 16, fontWeight: 'bold' },
+  badge: { marginLeft: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  badgeText: { fontSize: 10, fontWeight: 'bold' },
+  subText: { fontSize: 13, color: '#6B7280', marginTop: 2 },
+  dateText: { fontSize: 11, color: '#9CA3AF', marginTop: 4 },
+  expiredText: { color: '#EF4444', fontWeight: 'bold' },
+  actions: { flexDirection: 'row' },
+  actionBtn: { padding: 8, marginLeft: 8 },
+  empty: { textAlign: 'center', marginTop: 50, color: '#9CA3AF', fontStyle: 'italic' },
+  modal: { flex: 1, backgroundColor: '#fff' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
+  modalTitle: { fontSize: 18, fontWeight: 'bold' },
+  scanActions: { flexDirection: 'row', gap: 12, marginBottom: 20 },
+  scanBtn: { flex: 1, backgroundColor: '#4F46E5', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 12, borderRadius: 10 },
+  ocrBtn: { backgroundColor: '#0F766E' },
+  scanBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 8 },
+  label: { fontSize: 14, fontWeight: 'bold', color: '#374151', marginBottom: 6 },
+  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 16 },
+  readonlyInput: { backgroundColor: '#F3F4F6' },
+  row: { flexDirection: 'row', marginBottom: 15 },
+  halfField: { flex: 1, marginHorizontal: 4 },
+  typeBtn: { flex: 1, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#D1D5DB', alignItems: 'center', marginRight: 8 },
+  typeBtnActive: { backgroundColor: '#059669', borderColor: '#059669' },
+  typeBtnText: { fontWeight: 'bold', color: '#4B5563' },
+  typeBtnTextActive: { color: '#fff' },
+  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15, backgroundColor: '#F3F4F6', marginRight: 8 },
+  chipActive: { backgroundColor: '#059669' },
+  chipText: { fontSize: 12, fontWeight: 'bold', color: '#4B5563' },
+  chipTextActive: { color: '#fff' },
+  reminderBox: { backgroundColor: '#F3F4F6', padding: 12, borderRadius: 10, marginBottom: 15 },
+  timesWrap: { flexDirection: 'row', flexWrap: 'wrap' },
+  timeInput: { width: 60, height: 40, backgroundColor: '#fff', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, textAlign: 'center', fontSize: 14, marginRight: 8, marginBottom: 8 },
+  infoSmall: { fontSize: 10, color: '#9CA3AF', marginTop: 2 },
+  saveBtn: { backgroundColor: '#059669', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 15, borderRadius: 10, marginTop: 20, marginBottom: 20 },
+  saveBtnText: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginLeft: 8 },
+  cameraModal: { flex: 1, backgroundColor: '#000' },
+  scannerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' },
+  scannerCutout: { width: 250, height: 250, borderRadius: 20, borderWidth: 2, borderColor: '#fff' },
+  overlayHint: { color: '#fff', marginTop: 20, fontWeight: '600' },
+  captureBtn: { marginTop: 20, backgroundColor: '#0F766E', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 999 },
+  captureBtnText: { color: '#fff', fontWeight: 'bold' },
+  closeScan: { marginTop: 20, backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 },
+  closeScanText: { color: '#fff', fontWeight: 'bold' },
 });

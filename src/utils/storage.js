@@ -1,116 +1,276 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { db } from './firebase';
+import { collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc, query } from 'firebase/firestore';
 
-export const KEYS = {
-  PERSONS: '@persons',
-  MEDS: '@meds',
-  SCHEDULES: '@schedules',
-  LOGS: '@logs' // Daily consumption logs
+export const FAMILY_KEY = 'FAMILY_CODE';
+
+// --- AUTH & CONFIG ---
+export const setFamilyCode = async (code) => {
+  if (code) await AsyncStorage.setItem(FAMILY_KEY, code.trim().toUpperCase());
 };
 
-const getData = async (key) => {
+export const getFamilyCode = async () => {
+  return await AsyncStorage.getItem(FAMILY_KEY);
+};
+
+export const clearFamilyCode = async () => {
+  await AsyncStorage.removeItem(FAMILY_KEY);
+};
+
+// --- ACTIVE PERSON (Aktif Profil) ---
+export const ACTIVE_PERSON_KEY = 'ACTIVE_PERSON_ID';
+
+export const setActivePerson = async (personId) => {
+  if (personId) await AsyncStorage.setItem(ACTIVE_PERSON_KEY, personId);
+};
+
+export const getActivePerson = async () => {
+  return await AsyncStorage.getItem(ACTIVE_PERSON_KEY);
+};
+
+export const clearActivePerson = async () => {
+  await AsyncStorage.removeItem(ACTIVE_PERSON_KEY);
+};
+
+export const clearAllData = async () => {
+  await AsyncStorage.removeItem(FAMILY_KEY);
+  await AsyncStorage.removeItem(ACTIVE_PERSON_KEY);
+};
+
+// --- GETTERS ---
+export const getMeds = async () => {
   try {
-    const json = await AsyncStorage.getItem(key);
-    return json ? JSON.parse(json) : [];
+    const code = await getFamilyCode();
+    if (!code) return [];
+    const q = query(collection(db, "families", code, "meds"));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (e) {
-    console.error('Storage get error', e);
+    console.error('getMeds failed:', e);
     return [];
   }
 };
 
-const storeData = async (key, value) => {
+export const getPersons = async () => {
   try {
-    await AsyncStorage.setItem(key, JSON.stringify(value));
+    const code = await getFamilyCode();
+    if (!code) return [];
+    const q = query(collection(db, "families", code, "persons"));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch (e) {
-    console.error('Storage set error', e);
+    console.error('getPersons failed:', e);
+    return [];
   }
 };
 
-export const generateId = () => Math.random().toString(36).substring(2, 9);
-
-// Persons
-export const getPersons = () => getData(KEYS.PERSONS);
-export const addPerson = async (personData) => {
-  const persons = await getPersons();
-  const newPerson = { id: generateId(), ...personData };
-  await storeData(KEYS.PERSONS, [...persons, newPerson]);
-  return newPerson;
-};
-export const editPerson = async (id, updatedData) => {
-  const persons = await getPersons();
-  const index = persons.findIndex(p => p.id === id);
-  if (index !== -1) {
-    persons[index] = { ...persons[index], ...updatedData };
-    await storeData(KEYS.PERSONS, persons);
+export const getLogs = async () => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) return [];
+    const q = query(collection(db, "families", code, "logs"));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b) => {
+      const parseDateTime = (dStr, tStr) => {
+        const [d, m, y] = (dStr || '').split('.');
+        if (!y) return 0;
+        return new Date(y, m-1, d).getTime();
+      };
+      return (b.timestamp || 0) - (a.timestamp || 0) || parseDateTime(b.date, b.time) - parseDateTime(a.date, a.time);
+    });
+  } catch (e) {
+    console.error('getLogs failed:', e);
+    return [];
   }
-};
-export const deletePerson = async (id) => {
-  const persons = await getPersons();
-  await storeData(KEYS.PERSONS, persons.filter(p => p.id !== id));
 };
 
-// Medicines
-export const getMeds = () => getData(KEYS.MEDS);
-export const addMed = async (medData) => {
-  const meds = await getMeds();
-  const newMed = { id: generateId(), ...medData };
-  await storeData(KEYS.MEDS, [...meds, newMed]);
-  return newMed;
-};
-export const editMed = async (id, updatedData) => {
-  const meds = await getMeds();
-  const index = meds.findIndex(m => m.id === id);
-  if (index !== -1) {
-    meds[index] = { ...meds[index], ...updatedData };
-    await storeData(KEYS.MEDS, meds);
+export const getBarcodeCatalogEntry = async (gtin) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code || !gtin) return null;
+
+    const ref = doc(db, 'families', code, 'barcodeCatalog', gtin);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return null;
+
+    return { id: snap.id, ...snap.data() };
+  } catch (e) {
+    console.error('getBarcodeCatalogEntry failed:', e);
+    return null;
   }
 };
-export const updateMedQuantity = async (id, decreaseAmount) => {
-  const meds = await getMeds();
-  const index = meds.findIndex(m => m.id === id);
-  if (index !== -1) {
-    const currentQ = parseFloat(meds[index].quantity) || 0;
-    meds[index].quantity = Math.max(0, currentQ - decreaseAmount).toString();
-    await storeData(KEYS.MEDS, meds);
+
+export const saveBarcodeCatalogEntry = async (gtin, data) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code || !gtin) return;
+
+    const ref = doc(db, 'families', code, 'barcodeCatalog', gtin);
+    await setDoc(ref, {
+      gtin,
+      ...data,
+      updatedAt: Date.now(),
+    }, { merge: true });
+  } catch (e) {
+    console.error('saveBarcodeCatalogEntry failed:', e);
+    throw e;
   }
 };
+
+// --- ADDERS ---
+export const addMed = async (med) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) return;
+    await addDoc(collection(db, "families", code, "meds"), { isActive: true, ...med });
+  } catch (e) {
+    console.error('addMed failed:', e);
+    throw e;
+  }
+};
+
+export const addPerson = async (person) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) return;
+    await addDoc(collection(db, "families", code, "persons"), person);
+  } catch (e) {
+    console.error('addPerson failed:', e);
+    throw e;
+  }
+};
+
+export const addLog = async (log) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) return;
+    await addDoc(collection(db, "families", code, "logs"), log);
+  } catch (e) {
+    console.error('addLog failed:', e);
+    throw e;
+  }
+};
+
+// --- EDITORS ---
+export const editMed = async (id, data) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) return;
+    await updateDoc(doc(db, "families", code, "meds", id), data);
+  } catch (e) {
+    console.error('editMed failed:', e);
+    throw e;
+  }
+};
+
+export const editPerson = async (id, data) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) return;
+    await updateDoc(doc(db, "families", code, "persons", id), data);
+  } catch (e) {
+    console.error('editPerson failed:', e);
+    throw e;
+  }
+};
+
+export const editLog = async (id, data) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) return;
+    await updateDoc(doc(db, "families", code, "logs", id), data);
+  } catch (e) {
+    console.error('editLog failed:', e);
+    throw e;
+  }
+};
+
+// --- DELETERS ---
 export const deleteMed = async (id) => {
-  const meds = await getMeds();
-  await storeData(KEYS.MEDS, meds.filter(m => m.id !== id));
-};
-
-// Logs & Tracking
-export const getLogs = () => getData(KEYS.LOGS);
-export const markAsTaken = async (medId, personId, dose) => {
-  const logs = await getLogs();
-  const today = new Date().toISOString().split('T')[0];
-  const newLog = {
-    id: generateId(),
-    date: today,
-    medId,
-    personId,
-    timestamp: new Date().getTime(),
-    dose: dose || 1
-  };
-  await storeData(KEYS.LOGS, [...logs, newLog]);
-  
-  // Decrease stock
-  await updateMedQuantity(medId, dose || 1);
-};
-export const editLog = async (id, personId, dose, newTimestamp) => {
-  const logs = await getLogs();
-  const index = logs.findIndex(l => l.id === id);
-  if (index !== -1) {
-    logs[index].personId = personId;
-    logs[index].dose = dose;
-    if (newTimestamp) {
-      logs[index].timestamp = newTimestamp;
-      const tDate = new Date(newTimestamp);
-      logs[index].date = tDate.toISOString().split('T')[0];
-    }
-    await storeData(KEYS.LOGS, logs);
+  try {
+    const code = await getFamilyCode();
+    if (!code) return false;
+    await deleteDoc(doc(db, "families", code, "meds", id));
+    return true;
+  } catch (err) {
+    console.error("Delete Med Error:", err);
+    return false;
   }
 };
-export const deleteLog = async (logId) => {
-  const logs = await getLogs();
-  await storeData(KEYS.LOGS, logs.filter(l => l.id !== logId));
+
+export const deletePerson = async (id) => {
+  const code = await getFamilyCode();
+  if (!code) return;
+  await deleteDoc(doc(db, "families", code, "persons", id));
+};
+
+export const deleteLog = async (id) => {
+  const code = await getFamilyCode();
+  if (!code) return;
+  await deleteDoc(doc(db, "families", code, "logs", id));
+};
+
+// --- ACTIONS ---
+export const markAsTaken = async (medId, takerId, consumeAmt = 1, medName = null, takerName = null) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) throw new Error("Aile kodu bulunamadı.");
+
+    const medsData = await getMeds();
+    const med = medsData.find(m => m.id === medId);
+    
+    let finalTakerName = takerName;
+    let finalMedName = medName || med?.name || 'İlaç';
+
+    if (!finalTakerName) {
+      const persons = await getPersons();
+      const taker = persons.find(p => p.id === takerId);
+      finalTakerName = taker ? taker.name : 'Bilinmeyen Kullanıcı';
+    }
+
+    if (med) {
+      let currentQty = parseFloat(med.quantity || 0);
+      let newQty = currentQty - consumeAmt;
+      if (newQty < 0) newQty = 0;
+      await editMed(medId, { quantity: newQty.toString() });
+    }
+
+    const now = new Date();
+    const dateStr = `${now.getDate().toString().padStart(2,'0')}.${(now.getMonth()+1).toString().padStart(2,'0')}.${now.getFullYear()}`;
+    const timeStr = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+    
+    await addLog({
+       medId,
+       medName: finalMedName,
+       personId: takerId,
+       takerName: finalTakerName,
+       date: dateStr,
+       time: timeStr,
+       timestamp: now.getTime(),
+       dosage: consumeAmt.toString()
+    });
+    
+    return true;
+  } catch (error) {
+    console.error("MarkAsTaken Error:", error);
+    return false;
+  }
+};
+
+export const repairAllMedsData = async () => {
+  try {
+    const meds = await getMeds();
+    for (const med of meds) {
+      let updates = {};
+      if (med.unit === 'ml' && med.form === 'Tablet') updates.form = 'Şurup';
+      if ((med.unit === 'Adet' || med.unit === 'adet') && med.form === 'Şurup') updates.form = 'Tablet';
+      if (!med.form) updates.form = (med.unit === 'ml') ? 'Şurup' : 'Tablet';
+
+      if (Object.keys(updates).length > 0) {
+        await editMed(med.id, updates);
+      }
+    }
+  } catch (e) {
+    console.error("Repair Error:", e);
+  }
 };

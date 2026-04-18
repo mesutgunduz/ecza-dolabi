@@ -1,212 +1,319 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useState, useCallback, useMemo } from 'react';
+import { 
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, 
+  ActivityIndicator, Alert, Platform, TextInput
+} from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getMeds, getPersons, markAsTaken } from '../utils/storage';
-import { AlertCircle, CheckCircle, User, Eye, EyeOff, Filter } from 'lucide-react-native';
+import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData } from '../utils/storage';
+import { 
+  Check, AlertCircle, Pill, Clock, Search
+} from 'lucide-react-native';
 
-export default function DashboardScreen() {
+export default function DashboardScreen({ activePerson }) {
   const [meds, setMeds] = useState([]);
   const [persons, setPersons] = useState([]);
-  const [lowStockMeds, setLowStockMeds] = useState([]);
-  
-  // Dashboard Filters
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [filterPerson, setFilterPerson] = useState('all');
-  const [hideEmpty, setHideEmpty] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const todayStr = (() => {
+    const now = new Date();
+    const d = now.getDate().toString().padStart(2, '0');
+    const m = (now.getMonth() + 1).toString().padStart(2, '0');
+    return `${d}.${m}.${now.getFullYear()}`;
+  })();
 
   const loadData = async () => {
-    const allMeds = await getMeds();
-    const allPersons = await getPersons();
-    setMeds(allMeds);
-    setPersons(allPersons);
-    
-    // Check low stock
-    const lowStock = allMeds.filter(m => {
-      const q = parseFloat(m.quantity);
-      if (m.unit === 'ml') return q <= 15 && q > 0;
-      return q <= 5 && q > 0;
-    });
-    setLowStockMeds(lowStock);
-  };
+    try {
+      const m = await getMeds();
+      const p = await getPersons();
+      const l = await getLogs();
+      
+      setMeds(m);
+      setPersons(p);
+      setLogs(l);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [])
-  );
-
-  const handleTakeMed = async (med) => {
-    if (parseFloat(med.quantity) > 0) {
-      const consumeAmt = med.consumePerUsage ? parseFloat(med.consumePerUsage) : 1;
-      await markAsTaken(med.id, med.personId || 'all', consumeAmt);
-      loadData();
+      if (activePerson && !activePerson.canSeeAll) {
+        setFilterPerson(activePerson.id);
+      }
+      
+      await repairAllMedsData();
+    } catch (err) {
+      console.error("Load Error:", err);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const getPersonName = (personId) => {
-    if (personId === 'all' || !personId) return '🏠 Ev / Ortak';
-    const person = persons.find(p => p.id === personId);
-    return person ? person.name : '🏠 Ev / Ortak';
+  useFocusEffect(useCallback(() => { loadData(); }, [activePerson]));
+
+  const filteredMeds = useMemo(() => {
+    let list = meds.filter(med => med.isActive !== false);
+    
+    // Eğer arama yapılıyorsa TÜM dolabı tara (Kişi filtresini baypas et)
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLocaleLowerCase('tr-TR').trim();
+      return list.filter(med => {
+        const medName = (med.name || '').toLocaleLowerCase('tr-TR');
+        return medName.includes(q);
+      });
+    }
+
+    // Arama yoksa sadece seçili kişinin (veya adminin seçtiği kişinin) ilaçlarını göster
+    if (filterPerson !== 'all') {
+      list = list.filter(med => med.personId === filterPerson || med.personId === 'all');
+    }
+
+    return list;
+  }, [meds, filterPerson, searchQuery]);
+
+  const medUsageCounts = useMemo(() => {
+    const counts = {};
+    const todayLogs = logs.filter(l => l.date === todayStr);
+    todayLogs.forEach(log => {
+      const key = `${log.medId}-${log.personId}`;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }, [logs, todayStr]);
+
+  const expiredMeds = useMemo(() => {
+    return meds.filter(med => {
+      if (!med.expiryDate || med.isActive === false) return false;
+      try {
+        const parts = med.expiryDate.split(/[\.\-\/]/).map(Number);
+        let expDate;
+        if (parts.length === 3) {
+          let [d, m, y] = parts;
+          if (y < 100) y += 2000;
+          expDate = new Date(y, m - 1, d, 23, 59, 59);
+        } else if (parts.length === 2) {
+          let [m, y] = parts;
+          if (y < 100) y += 2000;
+          expDate = new Date(y, m, 0, 23, 59, 59);
+        } else { return false; }
+        return expDate.getTime() < new Date().getTime();
+      } catch(e) { return false; }
+    });
+  }, [meds]);
+
+  const handleDeleteExpired = (medId) => {
+    const pDelete = async () => {
+       try {
+         setLoading(true);
+         await editMed(medId, { isActive: false });
+         Alert.alert("Başarılı", "İlaç dolaptan kaldırıldı.");
+         await loadData();
+       } catch(e) { 
+         Alert.alert("Hata", "İşlem başarısız."); 
+         setLoading(false); 
+       }
+    };
+    if (Platform.OS === 'web') {
+       if (window.confirm("Bu ilacı imha etmek istiyor musunuz?")) pDelete();
+    } else {
+      Alert.alert("İlacı Sil", "Bu ilacı dolaptan kaldırmak istiyor musunuz?", [
+        { text: "Vazgeç", style: "cancel" },
+        { text: "Sil", style: "destructive", onPress: pDelete }
+      ]);
+    }
   };
 
-  // Uygulanan Filtreler
-  let displayedMeds = meds;
-  if (filterPerson !== 'all') {
-    displayedMeds = displayedMeds.filter(m => m.personId === filterPerson);
-  }
-  if (hideEmpty) {
-    displayedMeds = displayedMeds.filter(m => parseFloat(m.quantity) > 0);
-  }
+  const handleTakeMed = async (med) => {
+    try {
+      const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
+      const takerObj = persons.find(p => p.id === takerId) || activePerson;
+      const takerName = takerObj.name || 'Bilinmeyen';
 
-  const FilterChips = () => (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
-      <TouchableOpacity 
-        style={[styles.chip, filterPerson === 'all' && styles.chipSelected]} 
-        onPress={() => setFilterPerson('all')}
-      >
-        <Text style={[styles.chipText, filterPerson === 'all' && styles.chipTextSelected]}>
-          Tüm Aile
-        </Text>
-      </TouchableOpacity>
-      {persons.map(item => (
-        <TouchableOpacity 
-          key={item.id} 
-          style={[styles.chip, filterPerson === item.id && styles.chipSelected]} 
-          onPress={() => setFilterPerson(item.id)}
-        >
-          <Text style={[styles.chipText, filterPerson === item.id && styles.chipTextSelected]}>
-            {item.name}
-          </Text>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
-  );
+      const proceed = async () => {
+        setLoading(true);
+        const success = await markAsTaken(med.id, takerId, parseFloat(med.consumePerUsage || 1), med.name, takerName);
+        if (success) {
+          Alert.alert("Başarılı ✅", `${takerName} için ${med.name} içildi.`);
+          await loadData();
+        } else {
+          Alert.alert("Hata", "İşlem kaydedilemedi.");
+          setLoading(false);
+        }
+      };
+
+      const countKey = `${med.id}-${takerId}`;
+      const currentCount = medUsageCounts[countKey] || 0;
+
+      if (med.dailyDose && currentCount >= med.dailyDose) {
+        if (Platform.OS === 'web') {
+          if (window.confirm("Günlük doz sınırına ulaştınız. Yine de devam edilsin mi?")) proceed();
+        } else {
+          Alert.alert("Doz Sınırı! ⚠️", "Sınıra ulaştınız. Yine de devam edilsin mi?", [
+            { text: "Vazgeç", style: "cancel" },
+            { text: "Evet", onPress: proceed }
+          ]);
+        }
+      } else {
+        await proceed();
+      }
+    } catch (err) {
+      Alert.alert("Hata", "Bir sorun oluştu: " + err.message);
+    }
+  };
+
+  if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#059669" /></View>;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 30 }}>
-      
-      {/* Filtre ve Kişi Seçim Barı */}
-      <View style={styles.filterBox}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-          <Filter color="#4B5563" size={16} />
-          <Text style={styles.filterTitle}>Kime Ait İlaçları Görelim?</Text>
-        </View>
+    <View style={styles.container}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
         
-        <FilterChips />
-
-        <TouchableOpacity 
-          style={[styles.toggleBtn, !hideEmpty && styles.toggleBtnActive]} 
-          onPress={() => setHideEmpty(!hideEmpty)}
-        >
-          {hideEmpty ? <EyeOff color="#6B7280" size={18} /> : <Eye color="#059669" size={18} />}
-          <Text style={[styles.toggleBtnText, !hideEmpty && styles.toggleBtnTextActive]}>
-            {hideEmpty ? "Biten Kayıtlar Gizleniyor (Tıkla Göster)" : "Biten/Eski Kayıtlar Da Ekleniyor (Tıkla Gizle)"}
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Ek Bilgiler */}
-      {lowStockMeds.length > 0 && filterPerson === 'all' && (
-        <View style={styles.alertCard}>
-          <View style={styles.alertHeader}>
-            <AlertCircle color="#EF4444" size={24} />
-            <Text style={styles.alertTitle}>Azalan İlaçlar Var</Text>
-          </View>
-          {lowStockMeds.map(m => (
-            <Text key={m.id} style={styles.alertText}>
-              • {m.name} ({getPersonName(m.personId)}) - Kalan: {m.quantity} {m.unit || 'Adet'}
-            </Text>
-          ))}
+        {/* Hoşgeldin Paneli */}
+        <View style={styles.welcomeBox}>
+          <Text style={styles.welcomeTitle}>Merhaba, {activePerson?.name} 👋</Text>
+          <Text style={styles.welcomeSub}>Aktif ilaç listesi:</Text>
         </View>
-      )}
 
-      {/* Liste */}
-      <Text style={styles.sectionTitle}>
-        {filterPerson === 'all' ? 'Evdeki Tüm İlaçlarım' : 'Kişisel İlaçlar'} ({displayedMeds.length})
-      </Text>
-      
-      {displayedMeds.length === 0 ? (
-        <View style={styles.emptyBox}>
-          <Text style={styles.emptyText}>Buralar boş görünüyor...</Text>
-          <Text style={styles.emptySubText}>Uygun ilaç bulunamadı veya tümü tükenmiş olabilir.</Text>
+        {/* Arama Çubuğu */}
+        <View style={styles.searchBox}>
+          <Search color="#9CA3AF" size={20} />
+          <TextInput 
+            style={styles.searchInput} 
+            placeholder="İlaç ara..." 
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
         </View>
-      ) : (
-        displayedMeds.map(med => {
-          const isEmpty = parseFloat(med.quantity) <= 0;
-          return (
-            <View key={med.id} style={[styles.medCard, isEmpty && styles.medCardEmpty]}>
-              <View style={styles.medInfo}>
-                <Text style={[styles.medName, isEmpty && styles.medNameEmpty]}>
-                  {med.name} {med.dose && <Text style={styles.doseText}>({med.dose})</Text>}
-                </Text>
-                <Text style={styles.medDetail}>
-                  {med.form} - {isEmpty ? 'TÜKENDİ' : `Kalan: ${med.quantity} ${med.unit || 'Adet'}`}
-                </Text>
-                
-                <View style={styles.personTag}>
-                  <User color="#2563EB" size={14} />
-                  <Text style={styles.personTagText}>{getPersonName(med.personId)}</Text>
-                </View>
 
+        {/* SKT Uyarısı */}
+        {expiredMeds.length > 0 && (
+          <View style={styles.alertPanel}>
+            <View style={styles.alertHeader}>
+              <AlertCircle color="#fff" size={20} />
+              <Text style={styles.alertTitle}>SKT'Sİ GEÇEN İLAÇLAR VAR!</Text>
+            </View>
+            {expiredMeds.map(med => (
+              <View key={med.id} style={styles.alertItem}>
+                <Text style={styles.alertItemName}>{med.name}</Text>
+                <TouchableOpacity onPress={() => handleDeleteExpired(med.id)} style={styles.alertDeleteBtn}>
+                  <Text style={{color: '#fff', fontSize: 11, fontWeight: 'bold'}}>Sil</Text>
+                </TouchableOpacity>
               </View>
+            ))}
+          </View>
+        )}
 
-              <TouchableOpacity 
-                style={[styles.takeBtn, isEmpty && styles.takeBtnDisabled]}
-                onPress={() => handleTakeMed(med)}
-                disabled={isEmpty}
-              >
-                <CheckCircle color="#fff" size={20} />
-                <View style={{marginLeft: 6}}>
-                  <Text style={styles.takeBtnText}>{isEmpty ? 'Bitti' : 'Kullan'}</Text>
-                  {!isEmpty && (
-                    <Text style={styles.takeBtnSubText}>(-{med.consumePerUsage || 1} {med.unit || 'Adet'})</Text>
+        {/* Kişi Filtreleri (Chips) - Sadece Yöneticiye Görünür */}
+        {activePerson?.canSeeAll && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+             <TouchableOpacity 
+               style={[styles.chip, filterPerson === 'all' && styles.chipActive]} 
+               onPress={() => setFilterPerson('all')}
+             >
+               <Text style={[styles.chipText, filterPerson === 'all' && {color: '#fff'}]}>Tüm Aile</Text>
+             </TouchableOpacity>
+             {persons.map(p => (
+               <TouchableOpacity 
+                 key={p.id} 
+                 style={[styles.chip, filterPerson === p.id && styles.chipActive]} 
+                 onPress={() => setFilterPerson(p.id)}
+               >
+                 <Text style={[styles.chipText, filterPerson === p.id && {color: '#fff'}]}>{p.name}</Text>
+               </TouchableOpacity>
+             ))}
+          </ScrollView>
+        )}
+
+        {/* İlaç Kartları */}
+        {filteredMeds.length === 0 ? (
+          <View style={styles.emptyBox}><Text style={styles.emptyText}>Bu kişi için ilaç bulunamadı.</Text></View>
+        ) : filteredMeds.map(med => {
+          const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
+          const count = medUsageCounts[`${med.id}-${takerId}`] || 0;
+          const isLimitReached = med.dailyDose && count >= med.dailyDose;
+
+          return (
+            <View key={med.id} style={styles.medCard}>
+              <View style={styles.medTop}>
+                <View style={[styles.iconBox, {backgroundColor: med.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5'}]}>
+                  {med.form === 'Şurup' ? <Text style={{fontSize: 20}}>🧪</Text> : <Pill color="#059669" size={24} />}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{flexDirection:'row', alignItems:'center'}}>
+                    <Text style={styles.medName}>{med.name}</Text>
+                    <View style={[styles.badge, {backgroundColor: med.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5'}]}>
+                      <Text style={[styles.badgeText, {color: med.form === 'Şurup' ? '#DB2777' : '#059669'}]}>{med.form || 'Tablet'}</Text>
+                    </View>
+                    {/* Sahibi Göster (Özellikle genel aramada faydalı) */}
+                    {med.personId && (
+                      <Text style={styles.ownerText}>
+                        • {med.personId === 'all' ? 'Ortak' : (persons.find(p => p.id === med.personId)?.name || 'Bilinmeyen')}
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={styles.medSub}>Stok: {med.quantity} {med.unit} | Bugün: {count}/{med.dailyDose || '-'}</Text>
+                  
+                  {/* Alarm Saatleri */}
+                  {med.reminderTimes && med.reminderTimes.length > 0 && (
+                    <View style={styles.reminderRow}>
+                      {med.reminderTimes.map((t, idx) => (
+                        <View key={idx} style={styles.timeTag}>
+                          <Clock size={10} color="#059669" />
+                          <Text style={styles.timeTagText}>{t}</Text>
+                        </View>
+                      ))}
+                    </View>
                   )}
                 </View>
-              </TouchableOpacity>
+              </View>
+              <View style={styles.medBottom}>
+                <Text style={styles.infoText}>{med.consumePerUsage} {med.unit} kullanılacak</Text>
+                <TouchableOpacity 
+                   style={[styles.btn, isLimitReached && {backgroundColor:'#D1D5DB'}]} 
+                   onPress={() => handleTakeMed(med)}
+                   disabled={isLimitReached}
+                >
+                  <Check color="#fff" size={18} />
+                  <Text style={styles.btnText}>{isLimitReached ? 'Doz Doldu' : 'Kullan'}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           );
-        })
-      )}
-    </ScrollView>
+        })}
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f3f4f6', padding: 16 },
-  
-  filterBox: { backgroundColor: '#fff', padding: 12, borderRadius: 12, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, elevation: 2 },
-  filterTitle: { fontSize: 14, fontWeight: 'bold', color: '#4B5563', marginLeft: 6 },
-  chipScroll: { marginBottom: 16, marginTop: 4 },
-  chip: { backgroundColor: '#F3F4F6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, marginRight: 8, borderWidth: 1, borderColor: '#E5E7EB' },
-  chipSelected: { backgroundColor: '#059669', borderColor: '#059669' },
-  chipText: { fontSize: 14, color: '#4B5563', fontWeight: 'bold' },
-  chipTextSelected: { color: '#fff' },
-
-  toggleBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', padding: 10, borderRadius: 8, justifyContent: 'center' },
-  toggleBtnActive: { backgroundColor: '#ECFDF5' },
-  toggleBtnText: { fontSize: 13, color: '#6B7280', fontWeight: '600', marginLeft: 8 },
-  toggleBtnTextActive: { color: '#059669' },
-
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#111827', marginBottom: 12, marginTop: 4 },
-  emptyBox: { alignItems: 'center', marginTop: 30 },
-  emptyText: { color: '#4B5563', fontSize: 16, fontWeight: 'bold' },
-  emptySubText: { color: '#9CA3AF', fontSize: 13, marginTop: 6 },
-
-  alertCard: { backgroundColor: '#FEF2F2', padding: 16, borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: '#FCA5A5' },
+  container: { flex: 1, backgroundColor: '#F9FAFB' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  welcomeBox: { marginBottom: 20 },
+  welcomeTitle: { fontSize: 22, fontWeight: 'bold', color: '#111827' },
+  welcomeSub: { fontSize: 14, color: '#6B7280' },
+  alertPanel: { backgroundColor: '#EF4444', borderRadius: 16, padding: 12, marginBottom: 20 },
   alertHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  alertTitle: { fontSize: 16, fontWeight: 'bold', color: '#B91C1C', marginLeft: 8 },
-  alertText: { fontSize: 14, color: '#991B1B', marginTop: 4 },
-  
-  medCard: { flexDirection: 'row', backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 12, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, elevation: 2 },
-  medCardEmpty: { backgroundColor: '#F9FAFB', opacity: 0.7 },
-  medInfo: { flex: 1 },
+  alertTitle: { color: '#fff', fontWeight: 'bold', fontSize: 12, marginLeft: 8 },
+  alertItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', padding: 8, borderRadius: 8, marginBottom: 4 },
+  alertItemName: { color: '#fff', fontSize: 13 },
+  alertDeleteBtn: { backgroundColor: '#000', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  chipScroll: { flexDirection: 'row', marginBottom: 20 },
+  chip: { paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20, backgroundColor: '#fff', marginRight: 10, borderWidth: 1, borderColor: '#D1D5DB' },
+  chipActive: { backgroundColor: '#059669', borderColor: '#059669' },
+  chipText: { fontSize: 13, fontWeight: 'bold', color: '#4B5563' },
+  medCard: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, elevation: 2 },
+  medTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  iconBox: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   medName: { fontSize: 16, fontWeight: 'bold', color: '#111827' },
-  medNameEmpty: { textDecorationLine: 'line-through', color: '#9CA3AF' },
-  doseText: { fontSize: 14, fontWeight: 'normal', color: '#6b7280' },
-  medDetail: { fontSize: 13, color: '#4b5563', marginTop: 4, fontWeight: 'bold' },
-  personTag: { flexDirection: 'row', alignItems: 'center', marginTop: 6, backgroundColor: '#EFF6FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, alignSelf: 'flex-start' },
-  personTagText: { fontSize: 13, color: '#2563EB', marginLeft: 4, fontWeight: 'bold' },
-  takeBtn: { flexDirection: 'row', backgroundColor: '#059669', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
-  takeBtnDisabled: { backgroundColor: '#9CA3AF' },
-  takeBtnText: { color: '#fff', fontWeight: 'bold' },
-  takeBtnSubText: { color: '#D1FAE5', fontSize: 10, marginTop: 2 }
+  ownerText: { fontSize: 11, color: '#6B7280', fontStyle: 'italic', marginLeft: 8 },
+  badge: { marginLeft: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  badgeText: { fontSize: 10, fontWeight: 'bold' },
+  medSub: { fontSize: 12, color: '#6B7280' },
+  medBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 12 },
+  infoText: { fontSize: 12, color: '#4B5563' },
+  btn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#059669', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 8 },
+  btnText: { color: '#fff', fontWeight: 'bold', fontSize: 13, marginLeft: 5 },
+  reminderRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 5 },
+  timeTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 5, marginBottom: 2, borderWidth: 1, borderColor: '#D1D5DB' },
+  timeTagText: { fontSize: 10, color: '#059669', fontWeight: 'bold', marginLeft: 3 },
+  emptyBox: { padding: 40, alignItems: 'center' },
+  emptyText: { color: '#9CA3AF', fontStyle: 'italic' },
+  searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 12, marginBottom: 20, borderWidth: 1, borderColor: '#E5E7EB', height: 46 },
+  searchInput: { flex: 1, marginLeft: 8, fontSize: 16, color: '#111827' }
 });
