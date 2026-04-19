@@ -33,7 +33,10 @@ export default function MedsScreen() {
   const [expiryDate, setExpiryDate] = useState('');
   const [formType, setFormType] = useState('Tablet');
   const [reminderTimes, setReminderTimes] = useState([]);
+  const [isActive, setIsActive] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterPerson, setFilterPerson] = useState('all');
+  const [showInactive, setShowInactive] = useState(false);
   const [barcodeMeta, setBarcodeMeta] = useState(defaultBarcodeMeta);
 
   const [cameraVisible, setCameraVisible] = useState(false);
@@ -41,7 +44,7 @@ export default function MedsScreen() {
   const [ocrLoading, setOcrLoading] = useState(false);
 
   useEffect(() => {
-    const dose = parseInt(dailyDose, 10) || 0;
+    const dose = Math.ceil(parseFloat(dailyDose) || 0);
     setReminderTimes(prev => {
       const next = [...prev];
       if (next.length < dose) {
@@ -58,7 +61,7 @@ export default function MedsScreen() {
       setLoading(true);
       const m = await getMeds();
       const p = await getPersons();
-      setMeds(m.filter(med => med.isActive !== false));
+      setMeds(m);
       setPersons(p);
     } catch (e) {
       console.error('Load Data Error:', e);
@@ -91,6 +94,7 @@ export default function MedsScreen() {
     setExpiryDate('');
     setFormType('Tablet');
     setReminderTimes([]);
+    setIsActive(true);
     setBarcodeMeta(defaultBarcodeMeta);
   };
 
@@ -106,6 +110,7 @@ export default function MedsScreen() {
       setExpiryDate(med.expiryDate || '');
       setFormType(med.form || 'Tablet');
       setReminderTimes(med.reminderTimes || []);
+      setIsActive(med.isActive !== false);
       setBarcodeMeta({
         gtin: med.gtin || '',
         serial: med.serial || '',
@@ -134,6 +139,7 @@ export default function MedsScreen() {
       expiryDate,
       form: formType,
       reminderTimes,
+      isActive,
       gtin: barcodeMeta?.gtin || '',
       serial: barcodeMeta?.serial || '',
       batch: barcodeMeta?.batch || '',
@@ -384,6 +390,24 @@ export default function MedsScreen() {
         />
       </View>
 
+      {/* Kişi Filtresi */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
+        <TouchableOpacity style={[styles.chip, filterPerson === 'all' && styles.chipActive]} onPress={() => setFilterPerson('all')}>
+          <Text style={[styles.chipText, filterPerson === 'all' && styles.chipTextActive]}>Hepsi</Text>
+        </TouchableOpacity>
+        {persons.map(p => (
+          <TouchableOpacity key={p.id} style={[styles.chip, filterPerson === p.id && styles.chipActive]} onPress={() => setFilterPerson(p.id)}>
+            <Text style={[styles.chipText, filterPerson === p.id && styles.chipTextActive]}>{p.name}</Text>
+          </TouchableOpacity>
+        ))}
+        <TouchableOpacity
+          style={[styles.chip, showInactive && styles.chipInactive]}
+          onPress={() => setShowInactive(prev => !prev)}
+        >
+          <Text style={[styles.chipText, showInactive && { color: '#fff' }]}>{showInactive ? 'Pasifleri Gizle' : 'Pasifleri Göster'}</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
       {expiredMeds.length > 0 && (
         <View style={styles.alertPanel}>
           <View style={styles.alertHeader}>
@@ -402,13 +426,18 @@ export default function MedsScreen() {
       )}
 
       <FlatList
-        data={meds.filter(m => (m.name || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR')))}
+        data={meds.filter(m => {
+          const nameMatch = (m.name || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'));
+          const personMatch = filterPerson === 'all' || m.personId === filterPerson || m.personId === 'all';
+          const activeMatch = showInactive ? true : m.isActive !== false;
+          return nameMatch && personMatch && activeMatch;
+        })}
         keyExtractor={item => item.id}
         renderItem={({ item }) => (
-          <View style={styles.card}>
+          <View style={[styles.card, item.isActive === false && styles.cardInactive]}>
             <View style={styles.content}>
               <View style={styles.medHeader}>
-                <Text style={styles.medName}>{item.name}</Text>
+                <Text style={[styles.medName, item.isActive === false && styles.medNameInactive]}>{item.name}</Text>
                 <View style={[styles.badge, { backgroundColor: item.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5' }]}>
                   <Text style={[styles.badgeText, { color: item.form === 'Şurup' ? '#DB2777' : '#059669' }]}>{item.form || 'Tablet'}</Text>
                 </View>
@@ -533,6 +562,13 @@ export default function MedsScreen() {
               </View>
             )}
 
+            <TouchableOpacity
+              style={[styles.activeToggle, isActive ? styles.activeToggleOn : styles.activeToggleOff]}
+              onPress={() => setIsActive(prev => !prev)}
+            >
+              <Text style={styles.activeToggleText}>{isActive ? '✅ Aktif İlaç' : '⏸ Pasif İlaç'}</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
               <Check color="#fff" size={24} />
               <Text style={styles.saveBtnText}>Kaydet</Text>
@@ -577,6 +613,14 @@ const styles = StyleSheet.create({
   addBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 4 },
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', margin: 16, marginBottom: 0, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', height: 44 },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 15, color: '#111827' },
+  filterScroll: { paddingHorizontal: 16, marginTop: 10, marginBottom: 4, flexGrow: 0 },
+  cardInactive: { opacity: 0.5 },
+  medNameInactive: { textDecorationLine: 'line-through', color: '#9CA3AF' },
+  activeToggle: { padding: 14, borderRadius: 10, alignItems: 'center', marginBottom: 16 },
+  activeToggleOn: { backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#059669' },
+  activeToggleOff: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#EF4444' },
+  activeToggleText: { fontWeight: 'bold', fontSize: 15 },
+  chipInactive: { backgroundColor: '#6B7280' },
   alertPanel: { backgroundColor: '#EF4444', marginHorizontal: 16, marginTop: 12, borderRadius: 12, overflow: 'hidden' },
   alertHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#DC2626' },
   alertTitle: { color: '#fff', fontWeight: 'bold', marginLeft: 8, fontSize: 12 },
