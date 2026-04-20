@@ -100,11 +100,24 @@ export default function DashboardScreen({ activePerson }) {
 
   const missedDoseItems = useMemo(() => {
     const now = new Date();
+    const nowClockMinutes = now.getHours() * 60 + now.getMinutes();
+    const logicalNowDate = new Date(now);
+    if (nowClockMinutes < rolloverMinutes) {
+      logicalNowDate.setDate(logicalNowDate.getDate() - 1);
+    }
+    const logicalWeekDay = logicalNowDate.getDay();
     const nowMinutes = getLogicalNowMinutes(now, rolloverMinutes);
 
     return filteredMeds.reduce((acc, med) => {
       const plannedDose = parseInt(med.dailyDose, 10);
       if (!plannedDose || plannedDose <= 0) return acc;
+
+      if (med.scheduleType === 'weekly') {
+        const selectedDays = Array.isArray(med.weeklyDays)
+          ? med.weeklyDays.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+          : [];
+        if (!selectedDays.includes(logicalWeekDay)) return acc;
+      }
 
       const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
       const countKey = `${med.id}-${takerId}`;

@@ -69,6 +69,25 @@ const buildUpcomingDates = (hour, minute, days = REMINDER_LOOKAHEAD_DAYS) => {
   return dates;
 };
 
+const getScheduleType = (med) => (med?.scheduleType === 'weekly' ? 'weekly' : 'daily');
+
+const getWeeklyDays = (med) => {
+  if (!Array.isArray(med?.weeklyDays)) return [];
+  return [...new Set(med.weeklyDays)]
+    .map((d) => Number(d))
+    .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+};
+
+const shouldScheduleOnDate = (med, date) => {
+  const type = getScheduleType(med);
+  if (type !== 'weekly') return true;
+
+  const selectedDays = getWeeklyDays(med);
+  if (selectedDays.length === 0) return false;
+
+  return selectedDays.includes(date.getDay());
+};
+
 export const scheduleMedReminders = async (med) => {
   if (!med?.id || !med?.name || !Array.isArray(med.reminderTimes) || med.isActive === false) return;
 
@@ -84,6 +103,8 @@ export const scheduleMedReminders = async (med) => {
     const upcomingDates = buildUpcomingDates(hour, minute);
 
     for (const scheduleDate of upcomingDates) {
+      if (!shouldScheduleOnDate(med, scheduleDate)) continue;
+
       await Notifications.scheduleNotificationAsync({
         content: {
           title: 'Ilac Zamani',

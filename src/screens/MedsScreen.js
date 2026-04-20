@@ -15,6 +15,15 @@ import { requestNotificationPermissions, scheduleMedReminders, cancelMedReminder
 import { Plus, Trash2, Edit2, X, Check, Search, Bell, Scan, ScanSearch, Clock, AlertCircle } from 'lucide-react-native';
 
 const defaultBarcodeMeta = { gtin: '', serial: '', batch: '' };
+const WEEK_DAY_OPTIONS = [
+  { value: 1, label: 'Pzt' },
+  { value: 2, label: 'Sal' },
+  { value: 3, label: 'Car' },
+  { value: 4, label: 'Per' },
+  { value: 5, label: 'Cum' },
+  { value: 6, label: 'Cmt' },
+  { value: 0, label: 'Paz' },
+];
 
 export default function MedsScreen() {
   const cameraRef = useRef(null);
@@ -33,6 +42,8 @@ export default function MedsScreen() {
   const [dailyDose, setDailyDose] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
   const [formType, setFormType] = useState('Tablet');
+  const [scheduleType, setScheduleType] = useState('daily');
+  const [weeklyDays, setWeeklyDays] = useState([]);
   const [reminderTimes, setReminderTimes] = useState([]);
   const [isActive, setIsActive] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -93,6 +104,8 @@ export default function MedsScreen() {
     setDailyDose('');
     setExpiryDate('');
     setFormType('Tablet');
+    setScheduleType('daily');
+    setWeeklyDays([]);
     setReminderTimes([]);
     setIsActive(true);
     setBarcodeMeta(defaultBarcodeMeta);
@@ -109,6 +122,8 @@ export default function MedsScreen() {
       setDailyDose(med.dailyDose?.toString() || '');
       setExpiryDate(med.expiryDate || '');
       setFormType(med.form || 'Tablet');
+      setScheduleType(med.scheduleType === 'weekly' ? 'weekly' : 'daily');
+      setWeeklyDays(Array.isArray(med.weeklyDays) ? med.weeklyDays.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) : []);
       setReminderTimes(med.reminderTimes || []);
       setIsActive(med.isActive !== false);
       setBarcodeMeta({
@@ -129,6 +144,16 @@ export default function MedsScreen() {
       return;
     }
 
+    if (scheduleType === 'weekly' && weeklyDays.length === 0) {
+      Alert.alert('Hata', 'Haftalık plan için en az bir gun secmelisiniz.');
+      return;
+    }
+
+    const normalizedWeeklyDays = [...new Set(weeklyDays)]
+      .map((d) => Number(d))
+      .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+      .sort((a, b) => a - b);
+
     const medData = {
       name,
       personId,
@@ -139,6 +164,8 @@ export default function MedsScreen() {
       expiryDate,
       form: formType,
       reminderTimes,
+      scheduleType,
+      weeklyDays: scheduleType === 'weekly' ? normalizedWeeklyDays : [],
       isActive,
       gtin: barcodeMeta?.gtin || '',
       serial: barcodeMeta?.serial || '',
@@ -209,6 +236,25 @@ export default function MedsScreen() {
         { text: 'Sil', style: 'destructive', onPress: performDelete },
       ]);
     }
+  };
+
+  const toggleWeeklyDay = (dayValue) => {
+    setWeeklyDays((prev) => {
+      if (prev.includes(dayValue)) {
+        return prev.filter((d) => d !== dayValue);
+      }
+      return [...prev, dayValue].sort((a, b) => a - b);
+    });
+  };
+
+  const getScheduleText = (med) => {
+    if (med.scheduleType !== 'weekly') return 'Plan: Gunluk';
+    const selected = (Array.isArray(med.weeklyDays) ? med.weeklyDays : [])
+      .map((d) => Number(d))
+      .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+    if (selected.length === 0) return 'Plan: Haftalik (gun secili degil)';
+    const dayLabels = WEEK_DAY_OPTIONS.filter((d) => selected.includes(d.value)).map((d) => d.label);
+    return `Plan: Haftalik (${dayLabels.join(', ')})`;
   };
 
   const checkExpiryStatus = (dateStr) => {
@@ -455,6 +501,7 @@ export default function MedsScreen() {
               <Text style={styles.ownerLine}>
                 Kisi: {item.personId === 'all' ? 'Ortak' : (persons.find(p => p.id === item.personId)?.name || 'Bilinmeyen')}
               </Text>
+              <Text style={styles.ownerLine}>{getScheduleText(item)}</Text>
 
               {Array.isArray(item.reminderTimes) && item.reminderTimes.filter(Boolean).length > 0 && (
                 <View style={styles.reminderRow}>
@@ -563,6 +610,43 @@ export default function MedsScreen() {
                 />
               </View>
             </View>
+
+            <Text style={styles.label}>Plan Tipi</Text>
+            <View style={styles.row}>
+              <TouchableOpacity
+                style={[styles.typeBtn, scheduleType === 'daily' && styles.typeBtnActive]}
+                onPress={() => setScheduleType('daily')}
+              >
+                <Text style={[styles.typeBtnText, scheduleType === 'daily' && styles.typeBtnTextActive]}>Gunluk</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.typeBtn, scheduleType === 'weekly' && styles.typeBtnActive]}
+                onPress={() => setScheduleType('weekly')}
+              >
+                <Text style={[styles.typeBtnText, scheduleType === 'weekly' && styles.typeBtnTextActive]}>Haftalik</Text>
+              </TouchableOpacity>
+            </View>
+
+            {scheduleType === 'weekly' && (
+              <View style={[styles.reminderBox, { marginTop: 2 }]}> 
+                <Text style={styles.label}>Kullanim Gunleri</Text>
+                <View style={styles.timesWrap}>
+                  {WEEK_DAY_OPTIONS.map((day) => {
+                    const selected = weeklyDays.includes(day.value);
+                    return (
+                      <TouchableOpacity
+                        key={day.value}
+                        style={[styles.weekChip, selected && styles.weekChipActive]}
+                        onPress={() => toggleWeeklyDay(day.value)}
+                      >
+                        <Text style={[styles.weekChipText, selected && styles.weekChipTextActive]}>{day.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={styles.infoSmall}>Ornek: Sali ve Persembe secerek haftalik kullanim plani olusturabilirsiniz.</Text>
+              </View>
+            )}
 
             <View style={styles.row}>
               <View style={styles.halfField}>
@@ -712,6 +796,10 @@ const styles = StyleSheet.create({
   timesWrap: { flexDirection: 'row', flexWrap: 'wrap' },
   timeInput: { width: 56, height: 36, backgroundColor: '#fff', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, textAlign: 'center', fontSize: 13, marginRight: 6, marginBottom: 6 },
   infoSmall: { fontSize: 10, color: '#9CA3AF', marginTop: 0 },
+  weekChip: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#D1D5DB', backgroundColor: '#fff', marginRight: 6, marginBottom: 6 },
+  weekChipActive: { backgroundColor: '#059669', borderColor: '#059669' },
+  weekChipText: { fontSize: 12, fontWeight: '700', color: '#374151' },
+  weekChipTextActive: { color: '#fff' },
   saveBtn: { backgroundColor: '#059669', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 12, borderRadius: 10, marginTop: 10, marginBottom: 10 },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginLeft: 8 },
   cameraModal: { flex: 1, backgroundColor: '#000' },
