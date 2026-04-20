@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  Alert, Modal, TextInput, ScrollView, Platform, ActivityIndicator, Switch
+  Alert, Modal, TextInput, ScrollView, Platform, ActivityIndicator, Switch, StatusBar
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView } from 'expo-camera';
@@ -381,9 +381,11 @@ export default function MedsScreen() {
     return nameMatch && personMatch && activeMatch;
   });
 
+  const headerTopInset = Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0;
+
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: 12 + headerTopInset }]}>
         <Pill color="#059669" size={24} />
         <Text style={styles.title}>İlaç Dolabım</Text>
         <TouchableOpacity style={styles.addBtn} onPress={() => openForm()}>
