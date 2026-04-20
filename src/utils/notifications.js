@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 const MED_REMINDER_CHANNEL_ID = 'med-reminders-v2';
+const REMINDER_LOOKAHEAD_DAYS = 14;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -46,8 +47,30 @@ const parseReminderTime = (rawTime) => {
   return { hour, minute };
 };
 
+const buildUpcomingDates = (hour, minute, days = REMINDER_LOOKAHEAD_DAYS) => {
+  const dates = [];
+  const now = new Date();
+
+  const first = new Date(now);
+  first.setSeconds(0, 0);
+  first.setHours(hour, minute, 0, 0);
+
+  // Saat bugun gecmisse yarindan baslat
+  if (first.getTime() <= now.getTime()) {
+    first.setDate(first.getDate() + 1);
+  }
+
+  for (let i = 0; i < days; i += 1) {
+    const dt = new Date(first);
+    dt.setDate(first.getDate() + i);
+    dates.push(dt);
+  }
+
+  return dates;
+};
+
 export const scheduleMedReminders = async (med) => {
-  if (!med?.id || !med?.name || !Array.isArray(med.reminderTimes)) return;
+  if (!med?.id || !med?.name || !Array.isArray(med.reminderTimes) || med.isActive === false) return;
 
   // Önce bu ilaca ait eski bildirimleri iptal et
   await cancelMedReminders(med);
@@ -58,21 +81,24 @@ export const scheduleMedReminders = async (med) => {
 
     const { hour, minute } = parsedTime;
 
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Ilac Zamani',
-        body: `${med.name} alma zamani geldi.`,
-        data: { medId: med.id, hour, minute },
-        sound: 'default',
-        priority: Notifications.AndroidNotificationPriority.MAX,
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DAILY,
-        hour,
-        minute,
-        channelId: MED_REMINDER_CHANNEL_ID,
-      },
-    });
+    const upcomingDates = buildUpcomingDates(hour, minute);
+
+    for (const scheduleDate of upcomingDates) {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: 'Ilac Zamani',
+          body: `${med.name} alma zamani geldi.`,
+          data: { medId: med.id, hour, minute, source: 'med-reminder' },
+          sound: 'default',
+          priority: Notifications.AndroidNotificationPriority.MAX,
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          date: scheduleDate,
+          channelId: MED_REMINDER_CHANNEL_ID,
+        },
+      });
+    }
   }
 };
 

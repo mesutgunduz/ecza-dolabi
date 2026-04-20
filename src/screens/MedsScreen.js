@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  Alert, Modal, TextInput, ScrollView, Platform, ActivityIndicator
+  Alert, Modal, TextInput, ScrollView, Platform, ActivityIndicator, Switch
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView } from 'expo-camera';
@@ -44,7 +44,7 @@ export default function MedsScreen() {
   const [ocrLoading, setOcrLoading] = useState(false);
 
   useEffect(() => {
-    const dose = Math.ceil(parseFloat(dailyDose) || 0);
+    const dose = parseInt(dailyDose, 10) || 0;
     setReminderTimes(prev => {
       const next = [...prev];
       if (next.length < dose) {
@@ -167,7 +167,13 @@ export default function MedsScreen() {
         const current = editingMed
           ? all.find(m => m.id === editingMed.id)
           : [...all].reverse().find(m => m.name === name);
-        if (current) await scheduleMedReminders(current);
+        if (current) {
+          if (current.isActive === false) {
+            await cancelMedReminders(current);
+          } else {
+            await scheduleMedReminders(current);
+          }
+        }
       }
 
       setModalVisible(false);
@@ -187,7 +193,6 @@ export default function MedsScreen() {
           await cancelMedReminders(medToDelete);
         }
         await editMed(id, { isActive: false });
-        Alert.alert('Başarılı', 'İlaç dolaptan kaldırıldı.');
         loadData();
       } catch (e) {
         console.error('Delete med failed:', e);
@@ -228,7 +233,7 @@ export default function MedsScreen() {
     }
   };
 
-  const expiredMeds = meds.filter(med => med.expiryDate && checkExpiryStatus(med.expiryDate) === 'expired');
+  const expiredMeds = meds.filter(med => med.isActive !== false && med.expiryDate && checkExpiryStatus(med.expiryDate) === 'expired');
 
   const openBarcodeScanner = () => {
     setCameraMode('barcode');
@@ -369,6 +374,13 @@ export default function MedsScreen() {
     return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
   }
 
+  const filteredMeds = meds.filter(m => {
+    const nameMatch = (m.name || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'));
+    const personMatch = filterPerson === 'all' || m.personId === filterPerson || m.personId === 'all';
+    const activeMatch = showInactive ? true : m.isActive !== false;
+    return nameMatch && personMatch && activeMatch;
+  });
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -391,22 +403,24 @@ export default function MedsScreen() {
       </View>
 
       {/* Kişi Filtresi */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
-        <TouchableOpacity style={[styles.chip, filterPerson === 'all' && styles.chipActive]} onPress={() => setFilterPerson('all')}>
-          <Text style={[styles.chipText, filterPerson === 'all' && styles.chipTextActive]}>Hepsi</Text>
-        </TouchableOpacity>
-        {persons.map(p => (
-          <TouchableOpacity key={p.id} style={[styles.chip, filterPerson === p.id && styles.chipActive]} onPress={() => setFilterPerson(p.id)}>
-            <Text style={[styles.chipText, filterPerson === p.id && styles.chipTextActive]}>{p.name}</Text>
+      <View style={styles.filterBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={{ paddingRight: 16, alignItems: 'center' }}>
+          <TouchableOpacity style={[styles.chip, filterPerson === 'all' && styles.chipActive]} onPress={() => setFilterPerson('all')}>
+            <Text style={[styles.chipText, filterPerson === 'all' && styles.chipTextActive]}>Tüm Aile</Text>
           </TouchableOpacity>
-        ))}
-        <TouchableOpacity
-          style={[styles.chip, showInactive && styles.chipInactive]}
-          onPress={() => setShowInactive(prev => !prev)}
-        >
-          <Text style={[styles.chipText, showInactive && { color: '#fff' }]}>{showInactive ? 'Pasifleri Gizle' : 'Pasifleri Göster'}</Text>
-        </TouchableOpacity>
-      </ScrollView>
+          {persons.map(p => (
+            <TouchableOpacity key={p.id} style={[styles.chip, filterPerson === p.id && styles.chipActive]} onPress={() => setFilterPerson(p.id)}>
+              <Text style={[styles.chipText, filterPerson === p.id && styles.chipTextActive]}>{p.name}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity
+            style={[styles.chip, showInactive && styles.chipInactive]}
+            onPress={() => setShowInactive(prev => !prev)}
+          >
+            <Text style={[styles.chipText, showInactive && { color: '#fff' }]}>{showInactive ? 'Pasifleri Gizle' : 'Pasifleri Göster'}</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
 
       {expiredMeds.length > 0 && (
         <View style={styles.alertPanel}>
@@ -426,12 +440,7 @@ export default function MedsScreen() {
       )}
 
       <FlatList
-        data={meds.filter(m => {
-          const nameMatch = (m.name || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'));
-          const personMatch = filterPerson === 'all' || m.personId === filterPerson || m.personId === 'all';
-          const activeMatch = showInactive ? true : m.isActive !== false;
-          return nameMatch && personMatch && activeMatch;
-        })}
+        data={filteredMeds}
         keyExtractor={item => item.id}
         renderItem={({ item }) => (
           <View style={[styles.card, item.isActive === false && styles.cardInactive]}>
@@ -470,8 +479,12 @@ export default function MedsScreen() {
             </View>
           </View>
         )}
-        ListEmptyComponent={<Text style={styles.empty}>Dolapta ilaç bulunamadı.</Text>}
-        contentContainerStyle={{ padding: 16 }}
+        ListEmptyComponent={(
+          <View style={styles.emptyBoxCompact}>
+            <Text style={styles.empty}>Seçili filtre için ilaç bulunamadı.</Text>
+          </View>
+        )}
+        contentContainerStyle={{ padding: 12, paddingBottom: 22, flexGrow: 1 }}
       />
 
       <Modal visible={modalVisible} animationType="slide">
@@ -481,7 +494,7 @@ export default function MedsScreen() {
             <TouchableOpacity onPress={() => setModalVisible(false)}><X color="#000" size={24} /></TouchableOpacity>
           </View>
 
-          <ScrollView style={{ padding: 16 }}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 24 }}>
             <View style={styles.scanActions}>
               <TouchableOpacity style={styles.scanBtn} onPress={openBarcodeScanner}>
                 <Scan color="#fff" size={20} />
@@ -530,12 +543,43 @@ export default function MedsScreen() {
 
             <View style={styles.row}>
               <View style={styles.halfField}>
-                <Text style={styles.label}>Günlük Doz</Text>
-                <TextInput style={styles.input} keyboardType="numeric" placeholder="Örn: 3" value={dailyDose} onChangeText={setDailyDose} />
+                <Text style={styles.label}>Kullanım Dozu</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="decimal-pad"
+                  placeholder="Örn: 0.5"
+                  value={consumePerUsage}
+                  onChangeText={(val) => setConsumePerUsage(val.replace(',', '.'))}
+                />
               </View>
               <View style={styles.halfField}>
+                <Text style={styles.label}>Günlük Kullanım Adedi</Text>
+                <TextInput
+                  style={styles.input}
+                  keyboardType="numeric"
+                  placeholder="Örn: 2"
+                  value={dailyDose}
+                  onChangeText={(val) => setDailyDose(val.replace(/[^0-9]/g, ''))}
+                />
+              </View>
+            </View>
+
+            <View style={styles.row}>
+              <View style={styles.halfField}>
                 <Text style={styles.label}>SKT (GG.AA.YYYY)</Text>
-                <TextInput style={styles.input} placeholder="31.12.2026" value={expiryDate} onChangeText={setExpiryDate} />
+                <TextInput style={[styles.input, styles.compactInput]} placeholder="31.12.2026" value={expiryDate} onChangeText={setExpiryDate} />
+              </View>
+              <View style={styles.halfField}>
+                <Text style={styles.label}>Durum</Text>
+                <View style={styles.switchRow}>
+                  <Text style={styles.switchLabel}>{isActive ? 'Aktif' : 'Pasif'}</Text>
+                  <Switch
+                    value={isActive}
+                    onValueChange={setIsActive}
+                    trackColor={{ false: '#FCA5A5', true: '#86EFAC' }}
+                    thumbColor={isActive ? '#059669' : '#EF4444'}
+                  />
+                </View>
               </View>
             </View>
 
@@ -561,13 +605,6 @@ export default function MedsScreen() {
                 <Text style={styles.infoSmall}>Format: 09:00, 14:30 vb.</Text>
               </View>
             )}
-
-            <TouchableOpacity
-              style={[styles.activeToggle, isActive ? styles.activeToggleOn : styles.activeToggleOff]}
-              onPress={() => setIsActive(prev => !prev)}
-            >
-              <Text style={styles.activeToggleText}>{isActive ? '✅ Aktif İlaç' : '⏸ Pasif İlaç'}</Text>
-            </TouchableOpacity>
 
             <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
               <Check color="#fff" size={24} />
@@ -607,69 +644,70 @@ export default function MedsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: { padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 18, fontWeight: 'bold' },
+  header: { padding: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  title: { fontSize: 18, fontWeight: 'bold', color: '#111827' },
   addBtn: { backgroundColor: '#059669', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
-  addBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 4 },
-  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', margin: 16, marginBottom: 0, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', height: 44 },
-  searchInput: { flex: 1, marginLeft: 8, fontSize: 15, color: '#111827' },
-  filterScroll: { paddingHorizontal: 16, marginTop: 10, marginBottom: 4, flexGrow: 0 },
+  addBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 4, fontSize: 14 },
+  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', marginHorizontal: 12, marginTop: 12, marginBottom: 0, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', height: 46 },
+  searchInput: { flex: 1, marginLeft: 8, fontSize: 16, color: '#111827' },
+  filterBar: { minHeight: 48, justifyContent: 'center' },
+  filterScroll: { paddingLeft: 12, marginTop: 8, marginBottom: 4 },
   cardInactive: { opacity: 0.5 },
   medNameInactive: { textDecorationLine: 'line-through', color: '#9CA3AF' },
-  activeToggle: { padding: 14, borderRadius: 10, alignItems: 'center', marginBottom: 16 },
-  activeToggleOn: { backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#059669' },
-  activeToggleOff: { backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#EF4444' },
-  activeToggleText: { fontWeight: 'bold', fontSize: 15 },
+  compactInput: { height: 40, paddingVertical: 6, marginBottom: 0 },
+  switchRow: { height: 40, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 10, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  switchLabel: { fontSize: 14, fontWeight: '600', color: '#374151' },
   chipInactive: { backgroundColor: '#6B7280' },
-  alertPanel: { backgroundColor: '#EF4444', marginHorizontal: 16, marginTop: 12, borderRadius: 12, overflow: 'hidden' },
+  alertPanel: { backgroundColor: '#EF4444', marginHorizontal: 12, marginTop: 8, borderRadius: 10, overflow: 'hidden' },
   alertHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#DC2626' },
   alertTitle: { color: '#fff', fontWeight: 'bold', marginLeft: 8, fontSize: 12 },
   alertItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.25)' },
   alertItemName: { color: '#fff', fontSize: 12, flex: 1, marginRight: 8 },
   alertDeleteBtn: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   alertDeleteText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, flexDirection: 'row', alignItems: 'center', elevation: 2 },
+  card: { backgroundColor: '#fff', borderRadius: 10, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', elevation: 2 },
   content: { flex: 1 },
   medHeader: { flexDirection: 'row', alignItems: 'center' },
-  medName: { fontSize: 16, fontWeight: 'bold' },
-  badge: { marginLeft: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  medName: { fontSize: 16, fontWeight: 'bold', flexShrink: 1, marginRight: 6, color: '#111827' },
+  badge: { marginLeft: 6, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
   badgeText: { fontSize: 10, fontWeight: 'bold' },
-  subText: { fontSize: 13, color: '#6B7280', marginTop: 2 },
-  ownerLine: { fontSize: 12, color: '#4B5563', marginTop: 4 },
-  reminderRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
-  timeTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, marginRight: 6, marginBottom: 6 },
-  timeTagText: { fontSize: 11, color: '#047857', fontWeight: '700', marginLeft: 4 },
-  dateText: { fontSize: 11, color: '#9CA3AF', marginTop: 4 },
+  subText: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  ownerLine: { fontSize: 11, color: '#6B7280', fontStyle: 'italic', marginTop: 2 },
+  reminderRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 },
+  timeTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 4, marginBottom: 2, borderWidth: 1, borderColor: '#D1D5DB' },
+  timeTagText: { fontSize: 10, color: '#059669', fontWeight: 'bold', marginLeft: 3 },
+  dateText: { fontSize: 11, color: '#9CA3AF', marginTop: 3 },
   expiredText: { color: '#EF4444', fontWeight: 'bold' },
   actions: { flexDirection: 'row' },
-  actionBtn: { padding: 8, marginLeft: 8 },
-  empty: { textAlign: 'center', marginTop: 50, color: '#9CA3AF', fontStyle: 'italic' },
+  actionBtn: { padding: 8, marginLeft: 6 },
+  emptyBoxCompact: { paddingTop: 24, alignItems: 'center' },
+  empty: { textAlign: 'center', color: '#9CA3AF', fontStyle: 'italic' },
   modal: { flex: 1, backgroundColor: '#fff' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', padding: 12, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
   modalTitle: { fontSize: 18, fontWeight: 'bold' },
-  scanActions: { flexDirection: 'row', gap: 12, marginBottom: 20 },
-  scanBtn: { flex: 1, backgroundColor: '#4F46E5', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 12, borderRadius: 10 },
+  scanActions: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  scanBtn: { flex: 1, backgroundColor: '#4F46E5', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 10, borderRadius: 8 },
   ocrBtn: { backgroundColor: '#0F766E' },
-  scanBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 8 },
-  label: { fontSize: 14, fontWeight: 'bold', color: '#374151', marginBottom: 6 },
-  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, padding: 12, fontSize: 16, marginBottom: 16 },
+  scanBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 6, fontSize: 13 },
+  label: { fontSize: 13, fontWeight: 'bold', color: '#374151', marginBottom: 4 },
+  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 9, fontSize: 14, marginBottom: 12 },
   readonlyInput: { backgroundColor: '#F3F4F6' },
-  row: { flexDirection: 'row', marginBottom: 15 },
-  halfField: { flex: 1, marginHorizontal: 4 },
-  typeBtn: { flex: 1, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#D1D5DB', alignItems: 'center', marginRight: 8 },
+  row: { flexDirection: 'row', marginBottom: 10 },
+  halfField: { flex: 1, marginHorizontal: 3 },
+  typeBtn: { flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#D1D5DB', alignItems: 'center', marginRight: 8 },
   typeBtnActive: { backgroundColor: '#059669', borderColor: '#059669' },
   typeBtnText: { fontWeight: 'bold', color: '#4B5563' },
   typeBtnTextActive: { color: '#fff' },
-  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 15, backgroundColor: '#F3F4F6', marginRight: 8 },
+  chip: { paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20, backgroundColor: '#F3F4F6', marginRight: 8, flexShrink: 0 },
   chipActive: { backgroundColor: '#059669' },
-  chipText: { fontSize: 12, fontWeight: 'bold', color: '#4B5563' },
+  chipText: { fontSize: 13, fontWeight: 'bold', color: '#4B5563' },
   chipTextActive: { color: '#fff' },
-  reminderBox: { backgroundColor: '#F3F4F6', padding: 12, borderRadius: 10, marginBottom: 15 },
+  reminderBox: { backgroundColor: '#F3F4F6', padding: 10, borderRadius: 10, marginBottom: 10 },
   timesWrap: { flexDirection: 'row', flexWrap: 'wrap' },
-  timeInput: { width: 60, height: 40, backgroundColor: '#fff', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, textAlign: 'center', fontSize: 14, marginRight: 8, marginBottom: 8 },
-  infoSmall: { fontSize: 10, color: '#9CA3AF', marginTop: 2 },
-  saveBtn: { backgroundColor: '#059669', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 15, borderRadius: 10, marginTop: 20, marginBottom: 20 },
-  saveBtnText: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginLeft: 8 },
+  timeInput: { width: 56, height: 36, backgroundColor: '#fff', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, textAlign: 'center', fontSize: 13, marginRight: 6, marginBottom: 6 },
+  infoSmall: { fontSize: 10, color: '#9CA3AF', marginTop: 0 },
+  saveBtn: { backgroundColor: '#059669', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 12, borderRadius: 10, marginTop: 10, marginBottom: 10 },
+  saveBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginLeft: 8 },
   cameraModal: { flex: 1, backgroundColor: '#000' },
   scannerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' },
   scannerCutout: { width: 250, height: 250, borderRadius: 20, borderWidth: 2, borderColor: '#fff' },

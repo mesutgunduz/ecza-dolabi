@@ -41,7 +41,7 @@ function MainTabs({ activePerson, onPersonChange, onFullLogout }) {
       {activePerson.canSeeAll && (
         <>
           <Tab.Screen name="Kişiler" component={PersonsScreen} />
-          <Tab.Screen name="İlaçlar">
+          <Tab.Screen name="İlaçlar" options={{ headerShown: false }}>
             {() => <MedsScreen activePerson={activePerson} />}
           </Tab.Screen>
         </>

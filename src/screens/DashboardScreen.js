@@ -103,7 +103,6 @@ export default function DashboardScreen({ activePerson }) {
        try {
          setLoading(true);
          await editMed(medId, { isActive: false });
-         Alert.alert("Başarılı", "İlaç dolaptan kaldırıldı.");
          await loadData();
        } catch(e) { 
          Alert.alert("Hata", "İşlem başarısız."); 
@@ -130,7 +129,6 @@ export default function DashboardScreen({ activePerson }) {
         setLoading(true);
         const success = await markAsTaken(med.id, takerId, parseFloat(med.consumePerUsage || 1), med.name, takerName);
         if (success) {
-          Alert.alert("Başarılı ✅", `${takerName} için ${med.name} içildi.`);
           await loadData();
         } else {
           Alert.alert("Hata", "İşlem kaydedilemedi.");
