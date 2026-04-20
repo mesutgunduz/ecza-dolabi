@@ -4,7 +4,8 @@ import {
   ActivityIndicator, Alert, Platform, TextInput
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData } from '../utils/storage';
+import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime } from '../utils/storage';
+import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import { 
   Check, AlertCircle, Pill, Clock, Search
 } from 'lucide-react-native';
@@ -16,23 +17,22 @@ export default function DashboardScreen({ activePerson }) {
   const [loading, setLoading] = useState(true);
   const [filterPerson, setFilterPerson] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [rolloverTime, setRolloverTime] = useState('00:00');
 
-  const todayStr = (() => {
-    const now = new Date();
-    const d = now.getDate().toString().padStart(2, '0');
-    const m = (now.getMonth() + 1).toString().padStart(2, '0');
-    return `${d}.${m}.${now.getFullYear()}`;
-  })();
+  const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
+  const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
 
   const loadData = async () => {
     try {
       const m = await getMeds();
       const p = await getPersons();
       const l = await getLogs();
+      const rt = await getDayRolloverTime();
       
       setMeds(m);
       setPersons(p);
       setLogs(l);
+      setRolloverTime(rt);
 
       if (activePerson && !activePerson.canSeeAll) {
         setFilterPerson(activePerson.id);
@@ -70,13 +70,13 @@ export default function DashboardScreen({ activePerson }) {
 
   const medUsageCounts = useMemo(() => {
     const counts = {};
-    const todayLogs = logs.filter(l => l.date === todayStr);
+    const todayLogs = logs.filter(l => getLogicalDateKeyForLog(l, rolloverMinutes) === logicalTodayKey);
     todayLogs.forEach(log => {
       const key = `${log.medId}-${log.personId}`;
       counts[key] = (counts[key] || 0) + 1;
     });
     return counts;
-  }, [logs, todayStr]);
+  }, [logs, rolloverMinutes, logicalTodayKey]);
 
   const expiredMeds = useMemo(() => {
     return meds.filter(med => {
@@ -100,7 +100,7 @@ export default function DashboardScreen({ activePerson }) {
 
   const missedDoseItems = useMemo(() => {
     const now = new Date();
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const nowMinutes = getLogicalNowMinutes(now, rolloverMinutes);
 
     return filteredMeds.reduce((acc, med) => {
       const plannedDose = parseInt(med.dailyDose, 10);
@@ -113,10 +113,9 @@ export default function DashboardScreen({ activePerson }) {
       const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes : [];
       const dueCount = reminderTimes
         .map((t) => {
-          const normalized = String(t || '').trim().replace('.', ':');
-          const [h, m] = normalized.split(':').map(Number);
-          if (Number.isNaN(h) || Number.isNaN(m)) return null;
-          return h * 60 + m;
+          const minutes = parseClockTimeToMinutes(t);
+          if (minutes == null) return null;
+          return adjustMinutesForRollover(minutes, rolloverMinutes);
         })
         .filter((minutes) => minutes !== null && minutes <= nowMinutes).length;
 
@@ -140,7 +139,7 @@ export default function DashboardScreen({ activePerson }) {
 
       return acc;
     }, []);
-  }, [filteredMeds, medUsageCounts, persons, activePerson]);
+  }, [filteredMeds, medUsageCounts, persons, activePerson, rolloverMinutes]);
 
   const handleDeleteExpired = (medId) => {
     const pDelete = async () => {

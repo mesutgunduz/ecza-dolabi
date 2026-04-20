@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, ActivityIndicator
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData } from '../utils/storage';
+import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime } from '../utils/storage';
 import { LogOut, Pill, Clock, CheckCircle, Shield, Users, Check } from 'lucide-react-native';
 
 export default function ProfileScreen({ activePerson, onPersonChange, onFullLogout }) {
@@ -12,6 +12,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
   const [recentLogs, setRecentLogs] = useState([]);
   const [familySummary, setFamilySummary] = useState([]);
   const [persons, setPersons] = useState([]);
+  const [rolloverTime, setRolloverTime] = useState('00:00');
   const [loading, setLoading] = useState(true);
 
   const todayStr = (() => {
@@ -26,7 +27,9 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       const allMeds = await getMeds();
       const allLogs = await getLogs();
       const allPersons = await getPersons();
+      const rt = await getDayRolloverTime();
       setPersons(allPersons);
+      setRolloverTime(rt);
 
       const meds = allMeds.filter(m => m.personId === activePerson.id && m.isActive !== false);
       const today = allLogs.filter(l => l.personId === activePerson.id && l.date === todayStr);
@@ -78,6 +81,14 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     }
   };
 
+  const handleRolloverChange = async (delta) => {
+    const [h] = String(rolloverTime || '00:00').split(':').map(Number);
+    const nextHour = (Number.isNaN(h) ? 0 : h + delta + 24) % 24;
+    const next = `${String(nextHour).padStart(2, '0')}:00`;
+    setRolloverTime(next);
+    await setDayRolloverTime(next);
+  };
+
   if (loading) return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
 
   return (
@@ -120,6 +131,25 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
         ))}
       </View>
 
+      {activePerson?.canSeeAll && (
+        <>
+          <Text style={styles.sectionTitle}>🕛 Gün Dönümü Saati</Text>
+          <View style={styles.rolloverBox}>
+            <Text style={styles.rolloverText}>Kaçırılan doz hesapları bu saate göre gün değiştirir.</Text>
+            <View style={styles.rolloverControls}>
+              <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleRolloverChange(-1)}>
+                <Text style={styles.rolloverBtnText}>-1s</Text>
+              </TouchableOpacity>
+              <Text style={styles.rolloverTime}>{rolloverTime}</Text>
+              <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleRolloverChange(1)}>
+                <Text style={styles.rolloverBtnText}>+1s</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.rolloverHint}>Varsayılan: 00:00 | Örnek: 03:00</Text>
+          </View>
+        </>
+      )}
+
       <TouchableOpacity style={styles.fullLogout} onPress={() => onFullLogout()}>
         <LogOut color="#EF4444" size={20} />
         <Text style={styles.logoutText}>Sistemden Çıkış Yap</Text>
@@ -146,6 +176,13 @@ const styles = StyleSheet.create({
   logTime: { width: 50, fontSize: 11, color: '#6B7280', fontWeight: 'bold' },
   logText: { fontSize: 13, fontWeight: '500' },
   logTaker: { fontSize: 11, color: '#9CA3AF' },
+  rolloverBox: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginTop: 6 },
+  rolloverText: { fontSize: 12, color: '#4B5563' },
+  rolloverControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  rolloverBtn: { backgroundColor: '#ECFDF5', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#10B981' },
+  rolloverBtnText: { color: '#047857', fontWeight: 'bold', fontSize: 12 },
+  rolloverTime: { marginHorizontal: 16, fontSize: 20, fontWeight: 'bold', color: '#111827' },
+  rolloverHint: { marginTop: 8, fontSize: 11, color: '#9CA3AF', textAlign: 'center' },
   fullLogout: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 30, padding: 15, backgroundColor: '#FEF2F2', borderRadius: 12 },
   logoutText: { color: '#EF4444', fontWeight: 'bold', marginLeft: 8 }
 });

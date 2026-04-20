@@ -4,7 +4,8 @@ import {
   Alert, ActivityIndicator, Linking
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getLogs, getMeds, getPersons, deleteLog, markAsTaken } from '../utils/storage';
+import { getLogs, getMeds, getPersons, deleteLog, markAsTaken, getDayRolloverTime } from '../utils/storage';
+import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import { Clock, User, Trash2, Pill, Share2, Check } from 'lucide-react-native';
 
 export default function LogsScreen({ activePerson }) {
@@ -12,13 +13,10 @@ export default function LogsScreen({ activePerson }) {
   const [persons, setPersons] = useState([]);
   const [meds, setMeds] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [rolloverTime, setRolloverTime] = useState('00:00');
 
-  const todayStr = (() => {
-    const now = new Date();
-    const d = now.getDate().toString().padStart(2, '0');
-    const m = (now.getMonth() + 1).toString().padStart(2, '0');
-    return `${d}.${m}.${now.getFullYear()}`;
-  })();
+  const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
+  const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
 
   const loadData = async () => {
     try {
@@ -26,6 +24,7 @@ export default function LogsScreen({ activePerson }) {
       const l = await getLogs();
       const p = await getPersons();
       const m = await getMeds();
+      const rt = await getDayRolloverTime();
 
       let filtered = l;
       if (activePerson && !activePerson.canSeeAll) {
@@ -35,6 +34,7 @@ export default function LogsScreen({ activePerson }) {
       setLogs(filtered);
       setPersons(p);
       setMeds(m.filter(x => x.isActive !== false));
+      setRolloverTime(rt);
     } catch (e) {
       console.error(e);
     } finally {
@@ -46,9 +46,9 @@ export default function LogsScreen({ activePerson }) {
 
   const missedDoseItems = useMemo(() => {
     const now = new Date();
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const nowMinutes = getLogicalNowMinutes(now, rolloverMinutes);
 
-    const todayLogs = logs.filter(l => l.date === todayStr);
+    const todayLogs = logs.filter(l => getLogicalDateKeyForLog(l, rolloverMinutes) === logicalTodayKey);
     const counts = {};
     todayLogs.forEach(log => {
       const key = `${log.medId}-${log.personId}`;
@@ -68,10 +68,9 @@ export default function LogsScreen({ activePerson }) {
       const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes : [];
       const dueCount = reminderTimes
         .map((t) => {
-          const normalized = String(t || '').trim().replace('.', ':');
-          const [h, m] = normalized.split(':').map(Number);
-          if (Number.isNaN(h) || Number.isNaN(m)) return null;
-          return h * 60 + m;
+          const minutes = parseClockTimeToMinutes(t);
+          if (minutes == null) return null;
+          return adjustMinutesForRollover(minutes, rolloverMinutes);
         })
         .filter((minutes) => minutes !== null && minutes <= nowMinutes).length;
 
@@ -97,7 +96,7 @@ export default function LogsScreen({ activePerson }) {
 
       return acc;
     }, []);
-  }, [logs, meds, persons, todayStr, activePerson]);
+  }, [logs, meds, persons, activePerson, rolloverMinutes, logicalTodayKey]);
 
   const getPersonDisplayName = (log) => {
     if (log.takerName) return log.takerName;

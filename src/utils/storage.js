@@ -19,6 +19,7 @@ export const clearFamilyCode = async () => {
 
 // --- ACTIVE PERSON (Aktif Profil) ---
 export const ACTIVE_PERSON_KEY = 'ACTIVE_PERSON_ID';
+export const DAY_ROLLOVER_KEY = 'DAY_ROLLOVER_TIME';
 
 export const setActivePerson = async (personId) => {
   if (personId) await AsyncStorage.setItem(ACTIVE_PERSON_KEY, personId);
@@ -35,6 +36,20 @@ export const clearActivePerson = async () => {
 export const clearAllData = async () => {
   await AsyncStorage.removeItem(FAMILY_KEY);
   await AsyncStorage.removeItem(ACTIVE_PERSON_KEY);
+  await AsyncStorage.removeItem(DAY_ROLLOVER_KEY);
+};
+
+export const setDayRolloverTime = async (timeStr) => {
+  const valid = /^([01]?\d|2[0-3]):[0-5]\d$/.test(String(timeStr || '').trim())
+    ? String(timeStr).trim()
+    : '00:00';
+  await AsyncStorage.setItem(DAY_ROLLOVER_KEY, valid);
+};
+
+export const getDayRolloverTime = async () => {
+  const stored = await AsyncStorage.getItem(DAY_ROLLOVER_KEY);
+  if (!stored) return '00:00';
+  return /^([01]?\d|2[0-3]):[0-5]\d$/.test(stored) ? stored : '00:00';
 };
 
 // --- GETTERS ---

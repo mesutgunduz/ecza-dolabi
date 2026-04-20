@@ -5,13 +5,14 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView } from 'expo-camera';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
-import { getMeds, getPersons, addMed, editMed, getBarcodeCatalogEntry, saveBarcodeCatalogEntry } from '../utils/storage';
+import { getMeds, getPersons, addMed, editMed, deleteMed, getBarcodeCatalogEntry, saveBarcodeCatalogEntry } from '../utils/storage';
 import { parseITSBarcode } from '../utils/barcodeParser';
 import { searchBarcodeFromAPI } from '../utils/api';
 import { parseMedicineTextFromOCR } from '../utils/ocrParser';
 import { requestNotificationPermissions, scheduleMedReminders, cancelMedReminders } from '../utils/notifications';
-import { Plus, Trash2, Edit2, X, Check, Pill, Search, Bell, Scan, ScanSearch, Clock, AlertCircle } from 'lucide-react-native';
+import { Plus, Trash2, Edit2, X, Check, Search, Bell, Scan, ScanSearch, Clock, AlertCircle } from 'lucide-react-native';
 
 const defaultBarcodeMeta = { gtin: '', serial: '', batch: '' };
 
@@ -36,7 +37,6 @@ export default function MedsScreen() {
   const [isActive, setIsActive] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterPerson, setFilterPerson] = useState('all');
-  const [showInactive, setShowInactive] = useState(false);
   const [barcodeMeta, setBarcodeMeta] = useState(defaultBarcodeMeta);
 
   const [cameraVisible, setCameraVisible] = useState(false);
@@ -192,7 +192,8 @@ export default function MedsScreen() {
         if (medToDelete) {
           await cancelMedReminders(medToDelete);
         }
-        await editMed(id, { isActive: false });
+        const removed = await deleteMed(id);
+        if (!removed) throw new Error('Delete failed');
         loadData();
       } catch (e) {
         console.error('Delete med failed:', e);
@@ -287,15 +288,6 @@ export default function MedsScreen() {
       const filledFields = [];
       if ((lookup?.name || name)) filledFields.push('ilaç adı');
       if ((lookup?.expiryDate || parsed?.expiryDate || expiryDate)) filledFields.push('son kullanma tarihi');
-
-      Alert.alert(
-        'Başarılı',
-        catalogEntry
-          ? 'Bu barkod daha önce kaydedilmiş. İlaç adı otomatik dolduruldu.'
-          : filledFields.length
-            ? `Karekod okundu. Doldurulan alanlar: ${filledFields.join(', ')}.`
-            : 'Karekod okundu.'
-      );
     } catch (error) {
       console.error('Barcode scan failed:', error);
       Alert.alert('Hata', 'Karekod işlendi ama bilgiler alınamadı.');
@@ -374,20 +366,27 @@ export default function MedsScreen() {
     return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
   }
 
-  const filteredMeds = meds.filter(m => {
-    const nameMatch = (m.name || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'));
-    const personMatch = filterPerson === 'all' || m.personId === filterPerson || m.personId === 'all';
-    const activeMatch = showInactive ? true : m.isActive !== false;
-    return nameMatch && personMatch && activeMatch;
-  });
+  const filteredMeds = meds
+    .filter(m => {
+      const nameMatch = (m.name || '').toLocaleLowerCase('tr-TR').includes(searchTerm.toLocaleLowerCase('tr-TR'));
+      const personMatch = filterPerson === 'all' || m.personId === filterPerson || m.personId === 'all';
+      return nameMatch && personMatch;
+    })
+    .sort((a, b) => {
+      const aActive = a.isActive !== false ? 1 : 0;
+      const bActive = b.isActive !== false ? 1 : 0;
+      if (aActive !== bActive) return bActive - aActive;
+      return (a.name || '').localeCompare((b.name || ''), 'tr');
+    });
 
   const headerTopInset = Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0;
 
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: 12 + headerTopInset }]}>
-        <Pill color="#059669" size={24} />
-        <Text style={styles.title}>İlaç Dolabım</Text>
+        <View style={styles.headerLeft}>
+          <Text style={styles.title}>İlaç Dolabım</Text>
+        </View>
         <TouchableOpacity style={styles.addBtn} onPress={() => openForm()}>
           <Plus color="#fff" size={20} />
           <Text style={styles.addBtnText}>Ekle</Text>
@@ -415,12 +414,6 @@ export default function MedsScreen() {
               <Text style={[styles.chipText, filterPerson === p.id && styles.chipTextActive]}>{p.name}</Text>
             </TouchableOpacity>
           ))}
-          <TouchableOpacity
-            style={[styles.chip, showInactive && styles.chipInactive]}
-            onPress={() => setShowInactive(prev => !prev)}
-          >
-            <Text style={[styles.chipText, showInactive && { color: '#fff' }]}>{showInactive ? 'Pasifleri Gizle' : 'Pasifleri Göster'}</Text>
-          </TouchableOpacity>
         </ScrollView>
       </View>
 
@@ -451,6 +444,11 @@ export default function MedsScreen() {
                 <Text style={[styles.medName, item.isActive === false && styles.medNameInactive]}>{item.name}</Text>
                 <View style={[styles.badge, { backgroundColor: item.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5' }]}>
                   <Text style={[styles.badgeText, { color: item.form === 'Şurup' ? '#DB2777' : '#059669' }]}>{item.form || 'Tablet'}</Text>
+                </View>
+                <View style={[styles.stateBadge, item.isActive === false ? styles.stateBadgeOff : styles.stateBadgeOn]}>
+                  <Text style={[styles.stateBadgeText, item.isActive === false ? styles.stateBadgeTextOff : styles.stateBadgeTextOn]}>
+                    {item.isActive === false ? 'Pasif' : 'Aktif'}
+                  </Text>
                 </View>
               </View>
               <Text style={styles.subText}>Kalan: {item.quantity} {item.unit} | Doz: {item.consumePerUsage}</Text>
@@ -490,7 +488,7 @@ export default function MedsScreen() {
       />
 
       <Modal visible={modalVisible} animationType="slide">
-        <View style={styles.modal}>
+        <SafeAreaView style={styles.modal} edges={['top']}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>{editingMed ? 'Düzenle' : 'Yeni İlaç'}</Text>
             <TouchableOpacity onPress={() => setModalVisible(false)}><X color="#000" size={24} /></TouchableOpacity>
@@ -613,7 +611,7 @@ export default function MedsScreen() {
               <Text style={styles.saveBtnText}>Kaydet</Text>
             </TouchableOpacity>
           </ScrollView>
-        </View>
+        </SafeAreaView>
       </Modal>
 
       <Modal visible={cameraVisible} animationType="slide">
@@ -646,9 +644,10 @@ export default function MedsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: { padding: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  header: { padding: 12, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E5E7EB', flexDirection: 'row', justifyContent: 'flex-start', alignItems: 'center' },
+  headerLeft: { flexDirection: 'row', alignItems: 'center' },
   title: { fontSize: 18, fontWeight: 'bold', color: '#111827' },
-  addBtn: { backgroundColor: '#059669', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  addBtn: { marginLeft: 'auto', backgroundColor: '#059669', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
   addBtnText: { color: '#fff', fontWeight: 'bold', marginLeft: 4, fontSize: 14 },
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', marginHorizontal: 12, marginTop: 12, marginBottom: 0, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: '#E5E7EB', height: 46 },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 16, color: '#111827' },
@@ -659,7 +658,6 @@ const styles = StyleSheet.create({
   compactInput: { height: 40, paddingVertical: 6, marginBottom: 0 },
   switchRow: { height: 40, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 10, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   switchLabel: { fontSize: 14, fontWeight: '600', color: '#374151' },
-  chipInactive: { backgroundColor: '#6B7280' },
   alertPanel: { backgroundColor: '#EF4444', marginHorizontal: 12, marginTop: 8, borderRadius: 10, overflow: 'hidden' },
   alertHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#DC2626' },
   alertTitle: { color: '#fff', fontWeight: 'bold', marginLeft: 8, fontSize: 12 },
@@ -673,6 +671,12 @@ const styles = StyleSheet.create({
   medName: { fontSize: 16, fontWeight: 'bold', flexShrink: 1, marginRight: 6, color: '#111827' },
   badge: { marginLeft: 6, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
   badgeText: { fontSize: 10, fontWeight: 'bold' },
+  stateBadge: { marginLeft: 6, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 },
+  stateBadgeOn: { backgroundColor: '#DCFCE7' },
+  stateBadgeOff: { backgroundColor: '#FEE2E2' },
+  stateBadgeText: { fontSize: 10, fontWeight: 'bold' },
+  stateBadgeTextOn: { color: '#166534' },
+  stateBadgeTextOff: { color: '#991B1B' },
   subText: { fontSize: 12, color: '#6B7280', marginTop: 2 },
   ownerLine: { fontSize: 11, color: '#6B7280', fontStyle: 'italic', marginTop: 2 },
   reminderRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 },
