@@ -98,6 +98,50 @@ export default function DashboardScreen({ activePerson }) {
     });
   }, [meds]);
 
+  const missedDoseItems = useMemo(() => {
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+    return filteredMeds.reduce((acc, med) => {
+      const plannedDose = parseInt(med.dailyDose, 10);
+      if (!plannedDose || plannedDose <= 0) return acc;
+
+      const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
+      const countKey = `${med.id}-${takerId}`;
+      const takenCount = medUsageCounts[countKey] || 0;
+
+      const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes : [];
+      const dueCount = reminderTimes
+        .map((t) => {
+          const normalized = String(t || '').trim().replace('.', ':');
+          const [h, m] = normalized.split(':').map(Number);
+          if (Number.isNaN(h) || Number.isNaN(m)) return null;
+          return h * 60 + m;
+        })
+        .filter((minutes) => minutes !== null && minutes <= nowMinutes).length;
+
+      if (dueCount <= takenCount) return acc;
+
+      const missed = Math.max(0, Math.min(plannedDose, dueCount) - takenCount);
+      if (missed <= 0) return acc;
+
+      const ownerName = takerId === 'all'
+        ? 'Ortak'
+        : (persons.find((p) => p.id === takerId)?.name || 'Bilinmeyen');
+
+      acc.push({
+        id: med.id,
+        name: med.name,
+        ownerName,
+        missed,
+        takenCount,
+        plannedDose,
+      });
+
+      return acc;
+    }, []);
+  }, [filteredMeds, medUsageCounts, persons, activePerson]);
+
   const handleDeleteExpired = (medId) => {
     const pDelete = async () => {
        try {
@@ -178,6 +222,14 @@ export default function DashboardScreen({ activePerson }) {
             onChangeText={setSearchQuery}
           />
         </View>
+
+        {/* Kaçırılan Doz Özeti */}
+        {missedDoseItems.length > 0 && (
+          <View style={styles.missedSummaryBox}>
+            <AlertCircle color="#B45309" size={14} />
+            <Text style={styles.missedSummaryText}>Bugün kaçırılan doz: {missedDoseItems.reduce((sum, item) => sum + item.missed, 0)}</Text>
+          </View>
+        )}
 
         {/* SKT Uyarısı */}
         {expiredMeds.length > 0 && (
@@ -291,6 +343,8 @@ const styles = StyleSheet.create({
   alertItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', padding: 8, borderRadius: 8, marginBottom: 4 },
   alertItemName: { color: '#fff', fontSize: 13 },
   alertDeleteBtn: { backgroundColor: '#000', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  missedSummaryBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF3C7', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 12, borderWidth: 1, borderColor: '#FCD34D' },
+  missedSummaryText: { fontSize: 12, color: '#92400E', fontWeight: '700', marginLeft: 6 },
   chipScroll: { flexDirection: 'row', marginBottom: 20 },
   chip: { paddingHorizontal: 15, paddingVertical: 8, borderRadius: 20, backgroundColor: '#fff', marginRight: 10, borderWidth: 1, borderColor: '#D1D5DB' },
   chipActive: { backgroundColor: '#059669', borderColor: '#059669' },

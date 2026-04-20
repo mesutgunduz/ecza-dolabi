@@ -1,17 +1,24 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   Alert, ActivityIndicator, Linking
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getLogs, getMeds, getPersons, deleteLog } from '../utils/storage';
-import { Clock, User, Trash2, Pill, Share2 } from 'lucide-react-native';
+import { getLogs, getMeds, getPersons, deleteLog, markAsTaken } from '../utils/storage';
+import { Clock, User, Trash2, Pill, Share2, Check } from 'lucide-react-native';
 
 export default function LogsScreen({ activePerson }) {
   const [logs, setLogs] = useState([]);
   const [persons, setPersons] = useState([]);
-  const [, setMeds] = useState([]);
+  const [meds, setMeds] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const todayStr = (() => {
+    const now = new Date();
+    const d = now.getDate().toString().padStart(2, '0');
+    const m = (now.getMonth() + 1).toString().padStart(2, '0');
+    return `${d}.${m}.${now.getFullYear()}`;
+  })();
 
   const loadData = async () => {
     try {
@@ -27,7 +34,7 @@ export default function LogsScreen({ activePerson }) {
 
       setLogs(filtered);
       setPersons(p);
-      setMeds(m);
+      setMeds(m.filter(x => x.isActive !== false));
     } catch (e) {
       console.error(e);
     } finally {
@@ -36,6 +43,61 @@ export default function LogsScreen({ activePerson }) {
   };
 
   useFocusEffect(useCallback(() => { loadData(); }, [activePerson]));
+
+  const missedDoseItems = useMemo(() => {
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const todayLogs = logs.filter(l => l.date === todayStr);
+    const counts = {};
+    todayLogs.forEach(log => {
+      const key = `${log.medId}-${log.personId}`;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+
+    return meds.reduce((acc, med) => {
+      const plannedDose = parseInt(med.dailyDose, 10);
+      if (!plannedDose || plannedDose <= 0) return acc;
+
+      const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
+      if (activePerson && !activePerson.canSeeAll && takerId !== activePerson.id) return acc;
+
+      const countKey = `${med.id}-${takerId}`;
+      const takenCount = counts[countKey] || 0;
+
+      const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes : [];
+      const dueCount = reminderTimes
+        .map((t) => {
+          const normalized = String(t || '').trim().replace('.', ':');
+          const [h, m] = normalized.split(':').map(Number);
+          if (Number.isNaN(h) || Number.isNaN(m)) return null;
+          return h * 60 + m;
+        })
+        .filter((minutes) => minutes !== null && minutes <= nowMinutes).length;
+
+      if (dueCount <= takenCount) return acc;
+
+      const missed = Math.max(0, Math.min(plannedDose, dueCount) - takenCount);
+      if (missed <= 0) return acc;
+
+      const ownerName = takerId === 'all'
+        ? 'Ortak'
+        : (persons.find((p) => p.id === takerId)?.name || 'Bilinmeyen');
+
+      acc.push({
+        id: med.id,
+        medName: med.name,
+        ownerName,
+        takerId,
+        consumePerUsage: parseFloat(med.consumePerUsage || 1),
+        missed,
+        takenCount,
+        plannedDose,
+      });
+
+      return acc;
+    }, []);
+  }, [logs, meds, persons, todayStr, activePerson]);
 
   const getPersonDisplayName = (log) => {
     if (log.takerName) return log.takerName;
@@ -74,10 +136,49 @@ export default function LogsScreen({ activePerson }) {
     }
   };
 
+  const handleQuickUseMissed = async (item) => {
+    try {
+      setLoading(true);
+      const success = await markAsTaken(
+        item.id,
+        item.takerId,
+        item.consumePerUsage,
+        item.medName,
+        item.ownerName
+      );
+
+      if (!success) {
+        Alert.alert('Hata', 'Kullanım kaydı eklenemedi.');
+      }
+      await loadData();
+    } catch (error) {
+      Alert.alert('Hata', 'Kullanım kaydı eklenemedi.');
+      setLoading(false);
+    }
+  };
+
   if (loading) return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
 
   return (
     <View style={styles.container}>
+      {missedDoseItems.length > 0 && (
+        <View style={styles.missedPanel}>
+          <Text style={styles.missedTitle}>Bugün Kaçırılan Dozlar</Text>
+          {missedDoseItems.map(item => (
+            <View key={item.id} style={styles.missedItem}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.missedItemName}>{item.medName} • {item.ownerName}</Text>
+                <Text style={styles.missedItemMeta}>Kaçırılan: {item.missed} | Alınan: {item.takenCount}/{item.plannedDose}</Text>
+              </View>
+              <TouchableOpacity style={styles.quickUseBtn} onPress={() => handleQuickUseMissed(item)}>
+                <Check color="#fff" size={14} />
+                <Text style={styles.quickUseBtnText}>Hızlı Kullan</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+
       <FlatList
         data={logs}
         keyExtractor={item => item.id}
@@ -111,7 +212,7 @@ export default function LogsScreen({ activePerson }) {
           </View>
         )}
         ListEmptyComponent={<Text style={styles.empty}>Henüz bir kayıt yok.</Text>}
-        contentContainerStyle={{ padding: 16 }}
+        contentContainerStyle={{ padding: 16, paddingTop: missedDoseItems.length > 0 ? 6 : 16 }}
       />
     </View>
   );
@@ -120,6 +221,13 @@ export default function LogsScreen({ activePerson }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  missedPanel: { margin: 16, marginBottom: 0, backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#FCD34D', borderRadius: 12, padding: 10 },
+  missedTitle: { fontSize: 13, fontWeight: 'bold', color: '#92400E', marginBottom: 6 },
+  missedItem: { backgroundColor: '#FFF7ED', borderRadius: 8, padding: 8, marginBottom: 6, borderWidth: 1, borderColor: '#FED7AA', flexDirection: 'row', alignItems: 'center' },
+  missedItemName: { fontSize: 12, fontWeight: '700', color: '#7C2D12' },
+  missedItemMeta: { fontSize: 11, color: '#9A3412', marginTop: 2 },
+  quickUseBtn: { backgroundColor: '#059669', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', marginLeft: 8 },
+  quickUseBtnText: { color: '#fff', fontSize: 11, fontWeight: '700', marginLeft: 4 },
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, flexDirection: 'row', alignItems: 'center', elevation: 2 },
   iconBox: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#ECFDF5', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   content: { flex: 1 },
