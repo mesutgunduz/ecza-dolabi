@@ -5,7 +5,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
-import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime, getFamilyCode } from '../utils/storage';
+import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime, getFamilyCode, getSnoozeWindowSettings, setSnoozeWindowSettings } from '../utils/storage';
 import { db } from '../utils/firebase';
 import { collection, addDoc, getDocs, deleteDoc, doc, query } from 'firebase/firestore';
 import { LogOut, Pill, Clock, CheckCircle, Shield, Users, Check, Download, Upload } from 'lucide-react-native';
@@ -17,6 +17,8 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
   const [familySummary, setFamilySummary] = useState([]);
   const [persons, setPersons] = useState([]);
   const [rolloverTime, setRolloverTime] = useState('00:00');
+  const [snoozeBeforeMinutes, setSnoozeBeforeMinutes] = useState(60);
+  const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
   const [loading, setLoading] = useState(true);
 
   const todayStr = (() => {
@@ -32,8 +34,11 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       const allLogs = await getLogs();
       const allPersons = await getPersons();
       const rt = await getDayRolloverTime();
+      const snoozeCfg = await getSnoozeWindowSettings();
       setPersons(allPersons);
       setRolloverTime(rt);
+      setSnoozeBeforeMinutes(snoozeCfg.beforeMinutes);
+      setSnoozeAfterMinutes(snoozeCfg.afterMinutes);
 
       const meds = allMeds.filter(m => m.personId === activePerson.id && m.isActive !== false);
       const today = allLogs.filter(l => l.personId === activePerson.id && l.date === todayStr);
@@ -98,12 +103,14 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
 
       const [allMeds, allLogs, allPersons] = await Promise.all([getMeds(), getLogs(), getPersons()]);
       const rollover = await getDayRolloverTime();
+      const snoozeWindow = await getSnoozeWindowSettings();
 
       const backup = {
         version: 1,
         exportedAt: new Date().toISOString(),
         familyCode: code,
         rolloverTime: rollover,
+        snoozeWindow,
         meds: allMeds,
         logs: allLogs,
         persons: allPersons,
@@ -196,6 +203,12 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       await Promise.all((backup.logs || []).map(l => { const { id, ...data } = l; return addDoc(collection(db, 'families', code, 'logs'), data); }));
 
       if (backup.rolloverTime) await setDayRolloverTime(backup.rolloverTime);
+      if (backup.snoozeWindow) {
+        await setSnoozeWindowSettings({
+          beforeMinutes: backup.snoozeWindow.beforeMinutes,
+          afterMinutes: backup.snoozeWindow.afterMinutes,
+        });
+      }
 
       Alert.alert('Başarılı', 'Veriler içe aktarıldı.');
       await loadData();
@@ -213,6 +226,27 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     const next = `${String(nextHour).padStart(2, '0')}:00`;
     setRolloverTime(next);
     await setDayRolloverTime(next);
+  };
+
+  const formatDuration = (mins) => {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h > 0 && m > 0) return `${h}s ${m}dk`;
+    if (h > 0) return `${h}s`;
+    return `${m}dk`;
+  };
+
+  const handleSnoozeWindowChange = async (key, delta) => {
+    const current = key === 'before' ? snoozeBeforeMinutes : snoozeAfterMinutes;
+    const next = Math.max(0, Math.min(24 * 60, current + delta));
+
+    if (key === 'before') setSnoozeBeforeMinutes(next);
+    else setSnoozeAfterMinutes(next);
+
+    await setSnoozeWindowSettings({
+      beforeMinutes: key === 'before' ? next : snoozeBeforeMinutes,
+      afterMinutes: key === 'after' ? next : snoozeAfterMinutes,
+    });
   };
 
   if (loading) return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
@@ -278,6 +312,43 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
 
       {activePerson?.canSeeAll && (
         <>
+          <Text style={styles.sectionTitle}>⏰ Alarm Erteleme Penceresi</Text>
+          <View style={styles.rolloverBox}>
+            <Text style={styles.rolloverText}>Ertele butonu, ilaç saati yaklaşınca görünür. Süre aşıldığında doz kaçırılmış listesine düşer.</Text>
+
+            <View style={styles.windowRow}>
+              <Text style={styles.windowLabel}>İlaç saatinden önce</Text>
+              <View style={styles.rolloverControls}>
+                <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleSnoozeWindowChange('before', -30)}>
+                  <Text style={styles.rolloverBtnText}>-30dk</Text>
+                </TouchableOpacity>
+                <Text style={styles.rolloverTimeSmall}>{formatDuration(snoozeBeforeMinutes)}</Text>
+                <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleSnoozeWindowChange('before', 30)}>
+                  <Text style={styles.rolloverBtnText}>+30dk</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.windowRow}>
+              <Text style={styles.windowLabel}>İlaç saatinden sonra</Text>
+              <View style={styles.rolloverControls}>
+                <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleSnoozeWindowChange('after', -30)}>
+                  <Text style={styles.rolloverBtnText}>-30dk</Text>
+                </TouchableOpacity>
+                <Text style={styles.rolloverTimeSmall}>{formatDuration(snoozeAfterMinutes)}</Text>
+                <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleSnoozeWindowChange('after', 30)}>
+                  <Text style={styles.rolloverBtnText}>+30dk</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <Text style={styles.rolloverHint}>Örnek: Önce 1s / Sonra 2s</Text>
+          </View>
+        </>
+      )}
+
+      {activePerson?.canSeeAll && (
+        <>
           <Text style={styles.sectionTitle}>💾 Veri Yedekleme</Text>
           <View style={styles.backupBox}>
             <Text style={styles.backupDesc}>Tüm ilaç, kişi ve geçmiş verilerini JSON dosyası olarak dışa aktarın veya önceki bir yedeği geri yükleyin.</Text>
@@ -327,7 +398,10 @@ const styles = StyleSheet.create({
   rolloverBtn: { backgroundColor: '#ECFDF5', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#10B981' },
   rolloverBtnText: { color: '#047857', fontWeight: 'bold', fontSize: 12 },
   rolloverTime: { marginHorizontal: 16, fontSize: 20, fontWeight: 'bold', color: '#111827' },
+  rolloverTimeSmall: { marginHorizontal: 16, fontSize: 16, fontWeight: 'bold', color: '#111827', minWidth: 72, textAlign: 'center' },
   rolloverHint: { marginTop: 8, fontSize: 11, color: '#9CA3AF', textAlign: 'center' },
+  windowRow: { marginTop: 10 },
+  windowLabel: { fontSize: 12, color: '#4B5563', fontWeight: '600' },
   fullLogout: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 30, padding: 15, backgroundColor: '#FEF2F2', borderRadius: 12 },
   logoutText: { color: '#EF4444', fontWeight: 'bold', marginLeft: 8 },
   backupBox: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginTop: 6 },

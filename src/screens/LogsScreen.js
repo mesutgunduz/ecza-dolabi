@@ -1,12 +1,12 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  Alert, ActivityIndicator, Linking
+  Alert, ActivityIndicator, Linking, ScrollView
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getLogs, getMeds, getPersons, deleteLog, markAsTaken, getDayRolloverTime } from '../utils/storage';
+import { getLogs, getMeds, getPersons, deleteLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
-import { Clock, User, Trash2, Pill, Share2, Check } from 'lucide-react-native';
+import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText } from 'lucide-react-native';
 
 export default function LogsScreen({ activePerson }) {
   const [logs, setLogs] = useState([]);
@@ -14,6 +14,8 @@ export default function LogsScreen({ activePerson }) {
   const [meds, setMeds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [rolloverTime, setRolloverTime] = useState('00:00');
+  const [activeTab, setActiveTab] = useState('history'); // 'history' | 'stats'
+  const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
 
   const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
   const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
@@ -25,6 +27,7 @@ export default function LogsScreen({ activePerson }) {
       const p = await getPersons();
       const m = await getMeds();
       const rt = await getDayRolloverTime();
+      const snoozeCfg = await getSnoozeWindowSettings();
 
       let filtered = l;
       if (activePerson && !activePerson.canSeeAll) {
@@ -35,6 +38,7 @@ export default function LogsScreen({ activePerson }) {
       setPersons(p);
       setMeds(m.filter(x => x.isActive !== false));
       setRolloverTime(rt);
+      setSnoozeAfterMinutes(snoozeCfg.afterMinutes);
     } catch (e) {
       console.error(e);
     } finally {
@@ -79,17 +83,18 @@ export default function LogsScreen({ activePerson }) {
       const takenCount = counts[countKey] || 0;
 
       const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes : [];
-      const dueCount = reminderTimes
+      const reminderSlots = reminderTimes
         .map((t) => {
           const minutes = parseClockTimeToMinutes(t);
           if (minutes == null) return null;
           return adjustMinutesForRollover(minutes, rolloverMinutes);
         })
-        .filter((minutes) => minutes !== null && minutes <= nowMinutes).length;
+        .filter((minutes) => minutes !== null)
+        .sort((a, b) => a - b)
+        .slice(0, plannedDose);
 
-      if (dueCount <= takenCount) return acc;
-
-      const missed = Math.max(0, Math.min(plannedDose, dueCount) - takenCount);
+      const pendingSlots = reminderSlots.slice(takenCount);
+      const missed = pendingSlots.filter((slot) => nowMinutes > slot + snoozeAfterMinutes).length;
       if (missed <= 0) return acc;
 
       const ownerName = takerId === 'all'
@@ -109,7 +114,7 @@ export default function LogsScreen({ activePerson }) {
 
       return acc;
     }, []);
-  }, [logs, meds, persons, activePerson, rolloverMinutes, logicalTodayKey]);
+  }, [logs, meds, persons, activePerson, rolloverMinutes, logicalTodayKey, snoozeAfterMinutes]);
 
   const getPersonDisplayName = (log) => {
     if (log.takerName) return log.takerName;
@@ -169,10 +174,125 @@ export default function LogsScreen({ activePerson }) {
     }
   };
 
+  const statsData = useMemo(() => {
+    const now = new Date();
+    const results = [];
+
+    for (const med of meds) {
+      const plannedDose = parseInt(med.dailyDose, 10);
+      if (!plannedDose || plannedDose <= 0) continue;
+
+      const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
+      if (activePerson && !activePerson.canSeeAll && takerId !== activePerson.id) continue;
+
+      const ownerName = takerId === 'all' ? 'Ortak' : (persons.find(p => p.id === takerId)?.name || 'Bilinmeyen');
+
+      const calcStats = (days) => {
+        let totalPlanned = 0;
+        let totalTaken = 0;
+
+        for (let i = 0; i < days; i++) {
+          const d = new Date(now);
+          d.setDate(d.getDate() - i);
+          const dateKey = getLogicalDateKeyForNow(d, rolloverMinutes);
+
+          if (med.scheduleType === 'weekly') {
+            const selectedDays = Array.isArray(med.weeklyDays)
+              ? med.weeklyDays.map(x => Number(x)).filter(x => x >= 0 && x <= 6)
+              : [];
+            const wd = d.getDay();
+            if (!selectedDays.includes(wd)) continue;
+          }
+
+          totalPlanned += plannedDose;
+          const dayTaken = logs.filter(l =>
+            l.medId === med.id && l.personId === takerId &&
+            getLogicalDateKeyForLog(l, rolloverMinutes) === dateKey
+          ).length;
+          totalTaken += Math.min(dayTaken, plannedDose);
+        }
+
+        const rate = totalPlanned > 0 ? Math.round((totalTaken / totalPlanned) * 100) : null;
+        return { totalPlanned, totalTaken, rate };
+      };
+
+      results.push({
+        id: med.id,
+        name: med.name,
+        ownerName,
+        week: calcStats(7),
+        month: calcStats(30),
+      });
+    }
+
+    return results.sort((a, b) => (a.week.rate ?? 100) - (b.week.rate ?? 100));
+  }, [meds, logs, persons, activePerson, rolloverMinutes]);
+
   if (loading) return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
 
   return (
     <View style={styles.container}>
+      <View style={styles.tabBar}>
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'history' && styles.tabBtnActive]}
+          onPress={() => setActiveTab('history')}
+        >
+          <ScrollText color={activeTab === 'history' ? '#059669' : '#6B7280'} size={15} />
+          <Text style={[styles.tabBtnText, activeTab === 'history' && styles.tabBtnTextActive]}>Geçmiş</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'stats' && styles.tabBtnActive]}
+          onPress={() => setActiveTab('stats')}
+        >
+          <BarChart2 color={activeTab === 'stats' ? '#059669' : '#6B7280'} size={15} />
+          <Text style={[styles.tabBtnText, activeTab === 'stats' && styles.tabBtnTextActive]}>İstatistik</Text>
+        </TouchableOpacity>
+      </View>
+
+      {activeTab === 'stats' ? (
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+          {statsData.length === 0 ? (
+            <Text style={styles.empty}>İstatistik için yeterli veri yok.</Text>
+          ) : statsData.map(item => {
+            const getRateColor = (r) => r == null ? '#9CA3AF' : r >= 80 ? '#059669' : r >= 50 ? '#D97706' : '#EF4444';
+            const getRateLabel = (r) => r == null ? 'Veri yok' : r >= 80 ? 'İyi' : r >= 50 ? 'Orta' : 'Düşük';
+            return (
+              <View key={item.id} style={styles.statCard}>
+                <View style={styles.statHeader}>
+                  <Text style={styles.statMedName}>{item.name}</Text>
+                  <Text style={styles.statOwner}>{item.ownerName}</Text>
+                </View>
+                <View style={styles.statRow}>
+                  <View style={styles.statBlock}>
+                    <Text style={styles.statPeriod}>Son 7 Gün</Text>
+                    <Text style={[styles.statRate, { color: getRateColor(item.week.rate) }]}>
+                      {item.week.rate != null ? `%${item.week.rate}` : '-'}
+                    </Text>
+                    <Text style={styles.statDetail}>{item.week.totalTaken}/{item.week.totalPlanned} doz</Text>
+                    <View style={styles.statBar}>
+                      <View style={[styles.statBarFill, { width: `${item.week.rate ?? 0}%`, backgroundColor: getRateColor(item.week.rate) }]} />
+                    </View>
+                    <Text style={[styles.statRateLabel, { color: getRateColor(item.week.rate) }]}>{getRateLabel(item.week.rate)}</Text>
+                  </View>
+                  <View style={styles.statDivider} />
+                  <View style={styles.statBlock}>
+                    <Text style={styles.statPeriod}>Son 30 Gün</Text>
+                    <Text style={[styles.statRate, { color: getRateColor(item.month.rate) }]}>
+                      {item.month.rate != null ? `%${item.month.rate}` : '-'}
+                    </Text>
+                    <Text style={styles.statDetail}>{item.month.totalTaken}/{item.month.totalPlanned} doz</Text>
+                    <View style={styles.statBar}>
+                      <View style={[styles.statBarFill, { width: `${item.month.rate ?? 0}%`, backgroundColor: getRateColor(item.month.rate) }]} />
+                    </View>
+                    <Text style={[styles.statRateLabel, { color: getRateColor(item.month.rate) }]}>{getRateLabel(item.month.rate)}</Text>
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </ScrollView>
+      ) : (
+        <>
       {missedDoseItems.length > 0 && (
         <View style={styles.missedPanel}>
           <Text style={styles.missedTitle}>Bugün Kaçırılan Dozlar</Text>
@@ -226,6 +346,8 @@ export default function LogsScreen({ activePerson }) {
         ListEmptyComponent={<Text style={styles.empty}>Henüz bir kayıt yok.</Text>}
         contentContainerStyle={{ padding: 16, paddingTop: missedDoseItems.length > 0 ? 6 : 16 }}
       />
+        </>
+      )}
     </View>
   );
 }
@@ -249,5 +371,23 @@ const styles = StyleSheet.create({
   tag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F3F4F6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   tagText: { fontSize: 11, color: '#4B5563', fontWeight: 'bold', marginLeft: 4 },
   actionBtn: { padding: 8, marginLeft: 4 },
-  empty: { textAlign: 'center', marginTop: 50, color: '#9CA3AF', fontStyle: 'italic' }
+  empty: { textAlign: 'center', marginTop: 50, color: '#9CA3AF', fontStyle: 'italic' },
+  tabBar: { flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' },
+  tabBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, gap: 6 },
+  tabBtnActive: { borderBottomWidth: 2, borderBottomColor: '#059669' },
+  tabBtnText: { fontSize: 14, fontWeight: '600', color: '#6B7280' },
+  tabBtnTextActive: { color: '#059669' },
+  statCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, elevation: 2 },
+  statHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  statMedName: { fontSize: 14, fontWeight: 'bold', color: '#111827', flex: 1 },
+  statOwner: { fontSize: 11, color: '#6B7280', fontStyle: 'italic', marginLeft: 8 },
+  statRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  statBlock: { flex: 1, alignItems: 'center' },
+  statDivider: { width: 1, backgroundColor: '#E5E7EB', marginHorizontal: 8, alignSelf: 'stretch' },
+  statPeriod: { fontSize: 11, color: '#6B7280', fontWeight: '600', marginBottom: 4 },
+  statRate: { fontSize: 24, fontWeight: 'bold' },
+  statDetail: { fontSize: 11, color: '#9CA3AF', marginTop: 2 },
+  statBar: { width: '100%', height: 6, backgroundColor: '#F3F4F6', borderRadius: 3, marginTop: 8, overflow: 'hidden' },
+  statBarFill: { height: 6, borderRadius: 3 },
+  statRateLabel: { fontSize: 11, fontWeight: '700', marginTop: 4 },
 });

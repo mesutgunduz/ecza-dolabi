@@ -4,8 +4,9 @@ import {
   ActivityIndicator, Alert, Platform, TextInput
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime } from '../utils/storage';
+import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
+import { scheduleReminderSnooze } from '../utils/notifications';
 import { 
   Check, AlertCircle, Pill, Clock, Search
 } from 'lucide-react-native';
@@ -18,6 +19,8 @@ export default function DashboardScreen({ activePerson }) {
   const [filterPerson, setFilterPerson] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [rolloverTime, setRolloverTime] = useState('00:00');
+  const [snoozeBeforeMinutes, setSnoozeBeforeMinutes] = useState(60);
+  const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
 
   const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
   const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
@@ -37,11 +40,14 @@ export default function DashboardScreen({ activePerson }) {
       const p = await getPersons();
       const l = await getLogs();
       const rt = await getDayRolloverTime();
+      const snoozeCfg = await getSnoozeWindowSettings();
       
       setMeds(m);
       setPersons(p);
       setLogs(l);
       setRolloverTime(rt);
+      setSnoozeBeforeMinutes(snoozeCfg.beforeMinutes);
+      setSnoozeAfterMinutes(snoozeCfg.afterMinutes);
 
       if (activePerson && !activePerson.canSeeAll) {
         setFilterPerson(activePerson.id);
@@ -133,17 +139,18 @@ export default function DashboardScreen({ activePerson }) {
       const takenCount = medUsageCounts[countKey] || 0;
 
       const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes : [];
-      const dueCount = reminderTimes
+      const reminderSlots = reminderTimes
         .map((t) => {
           const minutes = parseClockTimeToMinutes(t);
           if (minutes == null) return null;
           return adjustMinutesForRollover(minutes, rolloverMinutes);
         })
-        .filter((minutes) => minutes !== null && minutes <= nowMinutes).length;
+        .filter((minutes) => minutes !== null)
+        .sort((a, b) => a - b)
+        .slice(0, plannedDose);
 
-      if (dueCount <= takenCount) return acc;
-
-      const missed = Math.max(0, Math.min(plannedDose, dueCount) - takenCount);
+      const pendingSlots = reminderSlots.slice(takenCount);
+      const missed = pendingSlots.filter((slot) => nowMinutes > slot + snoozeAfterMinutes).length;
       if (missed <= 0) return acc;
 
       const ownerName = takerId === 'all'
@@ -161,7 +168,7 @@ export default function DashboardScreen({ activePerson }) {
 
       return acc;
     }, []);
-  }, [filteredMeds, medUsageCounts, persons, activePerson, rolloverMinutes]);
+  }, [filteredMeds, medUsageCounts, persons, activePerson, rolloverMinutes, snoozeAfterMinutes]);
 
   const handleDeleteExpired = (medId) => {
     const pDelete = async () => {
@@ -218,6 +225,31 @@ export default function DashboardScreen({ activePerson }) {
       }
     } catch (err) {
       Alert.alert("Hata", "Bir sorun oluştu: " + err.message);
+    }
+  };
+
+  const handleSnoozeMed = async (med, minutes) => {
+    try {
+      const result = await scheduleReminderSnooze({
+        medId: med.id,
+        medName: med.name,
+        minutes,
+      });
+      const formatted = result?.triggerDate
+        ? result.triggerDate.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        : null;
+      Alert.alert(
+        'Alarm Ertelendi',
+        formatted
+          ? `${med.name} için hatırlatma ${formatted} saatine ertelendi.`
+          : `${med.name} için hatırlatma ${minutes} dakika sonrasına ertelendi.`
+      );
+    } catch (err) {
+      if (err?.message === 'NOTIFICATION_PERMISSION_DENIED') {
+        Alert.alert('İzin Gerekli', 'Alarm ertelemek için bildirim izni gerekli.');
+      } else {
+        Alert.alert('Hata', 'Alarm ertelenemedi.');
+      }
     }
   };
 
@@ -298,10 +330,24 @@ export default function DashboardScreen({ activePerson }) {
           const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
           const count = medUsageCounts[`${med.id}-${takerId}`] || 0;
           const isLimitReached = med.dailyDose && count >= med.dailyDose;
+          const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes.filter(Boolean) : [];
+          const nowLogicalMinutes = getLogicalNowMinutes(new Date(), rolloverMinutes);
           const selectedWeekDays = Array.isArray(med.weeklyDays)
             ? med.weeklyDays.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
             : [];
           const isScheduledToday = med.scheduleType !== 'weekly' || selectedWeekDays.includes(logicalWeekDay);
+          const reminderSlots = reminderTimes
+            .map((t) => {
+              const minutes = parseClockTimeToMinutes(t);
+              if (minutes == null) return null;
+              return adjustMinutesForRollover(minutes, rolloverMinutes);
+            })
+            .filter((minutes) => minutes !== null)
+            .sort((a, b) => a - b);
+          const pendingSlots = reminderSlots.slice(count, Math.max(count, parseInt(med.dailyDose, 10) || reminderSlots.length));
+          const canSnoozeNow = isScheduledToday && !isLimitReached && pendingSlots.some(
+            (slot) => nowLogicalMinutes >= (slot - snoozeBeforeMinutes) && nowLogicalMinutes <= (slot + snoozeAfterMinutes)
+          );
 
           return (
             <View key={med.id} style={styles.medCard}>
@@ -325,9 +371,9 @@ export default function DashboardScreen({ activePerson }) {
                   <Text style={styles.medSub}>Stok: {med.quantity} {med.unit} | Bugün: {count}/{med.dailyDose || '-'}</Text>
                   
                   {/* Alarm Saatleri */}
-                  {med.reminderTimes && med.reminderTimes.length > 0 && (
+                  {reminderTimes.length > 0 && (
                     <View style={styles.reminderRow}>
-                      {med.reminderTimes.map((t, idx) => (
+                      {reminderTimes.map((t, idx) => (
                         <View key={idx} style={styles.timeTag}>
                           <Clock size={10} color="#059669" />
                           <Text style={styles.timeTagText}>{t}</Text>
@@ -345,14 +391,31 @@ export default function DashboardScreen({ activePerson }) {
               </View>
               <View style={styles.medBottom}>
                 <Text style={styles.infoText}>{med.consumePerUsage} {med.unit} kullanılacak</Text>
-                <TouchableOpacity 
-                   style={[styles.btn, isLimitReached && {backgroundColor:'#D1D5DB'}]} 
-                   onPress={() => handleTakeMed(med)}
-                   disabled={isLimitReached}
-                >
-                  <Check color="#fff" size={18} />
-                  <Text style={styles.btnText}>{isLimitReached ? 'Doz Doldu' : 'Kullan'}</Text>
-                </TouchableOpacity>
+                <View style={styles.actionRow}>
+                  {canSnoozeNow && (
+                    <TouchableOpacity
+                      style={styles.snoozeBtn}
+                      onPress={() =>
+                        Alert.alert('Alarm Ertele', `${med.name} için alarm ne kadar ertelensin?`, [
+                          { text: 'Vazgeç', style: 'cancel' },
+                          { text: '10 dk', onPress: () => handleSnoozeMed(med, 10) },
+                          { text: '30 dk', onPress: () => handleSnoozeMed(med, 30) },
+                        ])
+                      }
+                    >
+                      <Clock color="#B45309" size={16} />
+                      <Text style={styles.snoozeBtnText}>Ertele</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity 
+                     style={[styles.btn, isLimitReached && {backgroundColor:'#D1D5DB'}]} 
+                     onPress={() => handleTakeMed(med)}
+                     disabled={isLimitReached}
+                  >
+                    <Check color="#fff" size={18} />
+                    <Text style={styles.btnText}>{isLimitReached ? 'Doz Doldu' : 'Kullan'}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           );
@@ -390,6 +453,9 @@ const styles = StyleSheet.create({
   medSub: { fontSize: 12, color: '#6B7280' },
   medBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 12 },
   infoText: { fontSize: 12, color: '#4B5563' },
+  actionRow: { flexDirection: 'row', alignItems: 'center' },
+  snoozeBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, marginRight: 8 },
+  snoozeBtnText: { color: '#92400E', fontWeight: '700', fontSize: 12, marginLeft: 4 },
   btn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#059669', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 8 },
   btnText: { color: '#fff', fontWeight: 'bold', fontSize: 13, marginLeft: 5 },
   reminderRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 5 },

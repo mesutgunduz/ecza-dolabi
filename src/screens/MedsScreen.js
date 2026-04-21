@@ -483,25 +483,28 @@ export default function MedsScreen() {
       <FlatList
         data={filteredMeds}
         keyExtractor={item => item.id}
-        renderItem={({ item }) => (
-          <View style={[styles.card, item.isActive === false && styles.cardInactive]}>
+        renderItem={({ item }) => {
+          const isPassive = item.isActive === false;
+
+          return (
+          <View style={[styles.card, isPassive && styles.cardInactive]}>
             <View style={styles.content}>
               <View style={styles.medHeader}>
-                <Text style={[styles.medName, item.isActive === false && styles.medNameInactive]}>{item.name}</Text>
+                <Text style={[styles.medName, isPassive && styles.medNameInactive]}>{item.name}</Text>
                 <View style={[styles.badge, { backgroundColor: item.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5' }]}>
                   <Text style={[styles.badgeText, { color: item.form === 'Şurup' ? '#DB2777' : '#059669' }]}>{item.form || 'Tablet'}</Text>
                 </View>
-                <View style={[styles.stateBadge, item.isActive === false ? styles.stateBadgeOff : styles.stateBadgeOn]}>
-                  <Text style={[styles.stateBadgeText, item.isActive === false ? styles.stateBadgeTextOff : styles.stateBadgeTextOn]}>
-                    {item.isActive === false ? 'Pasif' : 'Aktif'}
+                <View style={[styles.stateBadge, isPassive ? styles.stateBadgeOff : styles.stateBadgeOn]}>
+                  <Text style={[styles.stateBadgeText, isPassive ? styles.stateBadgeTextOff : styles.stateBadgeTextOn]}>
+                    {isPassive ? 'Pasif' : 'Aktif'}
                   </Text>
                 </View>
               </View>
-              <Text style={styles.subText}>Kalan: {item.quantity} {item.unit} | Doz: {item.consumePerUsage}</Text>
-              <Text style={styles.ownerLine}>
+              <Text style={[styles.subText, isPassive && styles.passiveSubText]}>Kalan: {item.quantity} {item.unit} | Doz: {item.consumePerUsage}</Text>
+              <Text style={[styles.ownerLine, isPassive && styles.passiveSubText]}>
                 Kisi: {item.personId === 'all' ? 'Ortak' : (persons.find(p => p.id === item.personId)?.name || 'Bilinmeyen')}
               </Text>
-              <Text style={styles.ownerLine}>{getScheduleText(item)}</Text>
+              <Text style={[styles.ownerLine, isPassive && styles.passiveSubText]}>{getScheduleText(item)}</Text>
 
               {Array.isArray(item.reminderTimes) && item.reminderTimes.filter(Boolean).length > 0 && (
                 <View style={styles.reminderRow}>
@@ -515,7 +518,7 @@ export default function MedsScreen() {
               )}
 
               {item.expiryDate ? (
-                <Text style={[styles.dateText, checkExpiryStatus(item.expiryDate) === 'expired' && styles.expiredText]}>
+                <Text style={[styles.dateText, isPassive && styles.passiveSubText, checkExpiryStatus(item.expiryDate) === 'expired' && styles.expiredText]}>
                   SKT: {item.expiryDate}
                 </Text>
               ) : null}
@@ -525,7 +528,8 @@ export default function MedsScreen() {
               <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.actionBtn}><Trash2 color="#EF4444" size={18} /></TouchableOpacity>
             </View>
           </View>
-        )}
+        );
+        }}
         ListEmptyComponent={(
           <View style={styles.emptyBoxCompact}>
             <Text style={styles.empty}>Seçili filtre için ilaç bulunamadı.</Text>
@@ -737,8 +741,9 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, marginLeft: 8, fontSize: 16, color: '#111827' },
   filterBar: { minHeight: 48, justifyContent: 'center' },
   filterScroll: { paddingLeft: 12, marginTop: 8, marginBottom: 4 },
-  cardInactive: { opacity: 0.5 },
-  medNameInactive: { textDecorationLine: 'line-through', color: '#9CA3AF' },
+  cardInactive: { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#D1D5DB' },
+  medNameInactive: { color: '#4B5563' },
+  passiveSubText: { color: '#6B7280' },
   compactInput: { height: 40, paddingVertical: 6, marginBottom: 0 },
   switchRow: { height: 40, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 10, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   switchLabel: { fontSize: 14, fontWeight: '600', color: '#374151' },

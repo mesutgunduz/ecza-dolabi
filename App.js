@@ -3,6 +3,7 @@ import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Home, Users, Pill, Clock, UserCircle, ShoppingCart } from 'lucide-react-native';
+import * as Notifications from 'expo-notifications';
 
 import DashboardScreen from './src/screens/DashboardScreen';
 import PersonsScreen from './src/screens/PersonsScreen';
@@ -13,7 +14,13 @@ import PersonSelectScreen from './src/screens/PersonSelectScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ReorderScreen from './src/screens/ReorderScreen';
 import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, clearActivePerson, clearAllData } from './src/utils/storage.js';
-import { requestNotificationPermissions } from './src/utils/notifications';
+import {
+  requestNotificationPermissions,
+  configureNotificationCategories,
+  scheduleReminderSnooze,
+  SNOOZE_10_ACTION_ID,
+  SNOOZE_30_ACTION_ID,
+} from './src/utils/notifications';
 
 const Tab = createBottomTabNavigator();
 
@@ -87,11 +94,32 @@ export default function App() {
         }
       }
 
+      await configureNotificationCategories();
       await requestNotificationPermissions();
       setLoading(false);
     };
 
     checkAuth();
+  }, []);
+
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => {
+      const actionId = response?.actionIdentifier;
+      if (actionId !== SNOOZE_10_ACTION_ID && actionId !== SNOOZE_30_ACTION_ID) return;
+
+      const data = response?.notification?.request?.content?.data || {};
+      const snoozeMinutes = actionId === SNOOZE_10_ACTION_ID ? 10 : 30;
+
+      await scheduleReminderSnooze({
+        medId: data.medId,
+        medName: data.medName,
+        minutes: snoozeMinutes,
+      });
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, []);
 
   const handleLogin = async (code) => {

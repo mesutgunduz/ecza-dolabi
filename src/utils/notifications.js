@@ -3,6 +3,9 @@ import { Platform } from 'react-native';
 
 const MED_REMINDER_CHANNEL_ID = 'med-reminders-v2';
 const REMINDER_LOOKAHEAD_DAYS = 14;
+export const SNOOZE_10_ACTION_ID = 'med-snooze-10';
+export const SNOOZE_30_ACTION_ID = 'med-snooze-30';
+const MED_REMINDER_CATEGORY_ID = 'med-reminder-actions';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -29,6 +32,19 @@ export const requestNotificationPermissions = async () => {
 
   const { status } = await Notifications.requestPermissionsAsync();
   return status === 'granted';
+};
+
+export const configureNotificationCategories = async () => {
+  await Notifications.setNotificationCategoryAsync(MED_REMINDER_CATEGORY_ID, [
+    {
+      identifier: SNOOZE_10_ACTION_ID,
+      buttonTitle: '10 dk ertele',
+    },
+    {
+      identifier: SNOOZE_30_ACTION_ID,
+      buttonTitle: '30 dk ertele',
+    },
+  ]);
 };
 
 const parseReminderTime = (rawTime) => {
@@ -109,7 +125,8 @@ export const scheduleMedReminders = async (med) => {
         content: {
           title: 'Ilac Zamani',
           body: `${med.name} alma zamani geldi.`,
-          data: { medId: med.id, hour, minute, source: 'med-reminder' },
+          data: { medId: med.id, medName: med.name, hour, minute, source: 'med-reminder' },
+          categoryIdentifier: MED_REMINDER_CATEGORY_ID,
           sound: 'default',
           priority: Notifications.AndroidNotificationPriority.MAX,
         },
@@ -121,6 +138,41 @@ export const scheduleMedReminders = async (med) => {
       });
     }
   }
+};
+
+export const scheduleReminderSnooze = async ({ medId, medName, minutes }) => {
+  if (!medId || !minutes || minutes <= 0) {
+    throw new Error('INVALID_SNOOZE_INPUT');
+  }
+
+  const hasPermission = await requestNotificationPermissions();
+  if (!hasPermission) {
+    throw new Error('NOTIFICATION_PERMISSION_DENIED');
+  }
+
+  const triggerDate = new Date(Date.now() + minutes * 60 * 1000);
+
+  const identifier = await Notifications.scheduleNotificationAsync({
+    content: {
+      title: 'Ilac Zamani',
+      body: `${medName || 'Ilac'} icin ertelenen hatirlatma.`,
+      data: { medId, medName, source: 'med-snooze', snoozeMinutes: minutes },
+      categoryIdentifier: MED_REMINDER_CATEGORY_ID,
+      sound: 'default',
+      priority: Notifications.AndroidNotificationPriority.MAX,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: triggerDate,
+      channelId: MED_REMINDER_CHANNEL_ID,
+    },
+  });
+
+  if (!identifier) {
+    throw new Error('SNOOZE_SCHEDULE_FAILED');
+  }
+
+  return { identifier, triggerDate };
 };
 
 export const cancelMedReminders = async (med) => {

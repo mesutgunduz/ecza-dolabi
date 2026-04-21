@@ -20,6 +20,10 @@ export const clearFamilyCode = async () => {
 // --- ACTIVE PERSON (Aktif Profil) ---
 export const ACTIVE_PERSON_KEY = 'ACTIVE_PERSON_ID';
 export const DAY_ROLLOVER_KEY = 'DAY_ROLLOVER_TIME';
+export const SNOOZE_BEFORE_MINUTES_KEY = 'SNOOZE_BEFORE_MINUTES';
+export const SNOOZE_AFTER_MINUTES_KEY = 'SNOOZE_AFTER_MINUTES';
+const DEFAULT_SNOOZE_BEFORE_MINUTES = 60;
+const DEFAULT_SNOOZE_AFTER_MINUTES = 120;
 
 export const setActivePerson = async (personId) => {
   if (personId) await AsyncStorage.setItem(ACTIVE_PERSON_KEY, personId);
@@ -37,6 +41,8 @@ export const clearAllData = async () => {
   await AsyncStorage.removeItem(FAMILY_KEY);
   await AsyncStorage.removeItem(ACTIVE_PERSON_KEY);
   await AsyncStorage.removeItem(DAY_ROLLOVER_KEY);
+  await AsyncStorage.removeItem(SNOOZE_BEFORE_MINUTES_KEY);
+  await AsyncStorage.removeItem(SNOOZE_AFTER_MINUTES_KEY);
 };
 
 export const setDayRolloverTime = async (timeStr) => {
@@ -50,6 +56,35 @@ export const getDayRolloverTime = async () => {
   const stored = await AsyncStorage.getItem(DAY_ROLLOVER_KEY);
   if (!stored) return '00:00';
   return /^([01]?\d|2[0-3]):[0-5]\d$/.test(stored) ? stored : '00:00';
+};
+
+const clampSnoozeMinutes = (value, fallback) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.round(n);
+  if (rounded < 0) return 0;
+  if (rounded > 24 * 60) return 24 * 60;
+  return rounded;
+};
+
+export const setSnoozeWindowSettings = async ({ beforeMinutes, afterMinutes }) => {
+  const before = clampSnoozeMinutes(beforeMinutes, DEFAULT_SNOOZE_BEFORE_MINUTES);
+  const after = clampSnoozeMinutes(afterMinutes, DEFAULT_SNOOZE_AFTER_MINUTES);
+  await AsyncStorage.setItem(SNOOZE_BEFORE_MINUTES_KEY, String(before));
+  await AsyncStorage.setItem(SNOOZE_AFTER_MINUTES_KEY, String(after));
+  return { beforeMinutes: before, afterMinutes: after };
+};
+
+export const getSnoozeWindowSettings = async () => {
+  const [beforeRaw, afterRaw] = await Promise.all([
+    AsyncStorage.getItem(SNOOZE_BEFORE_MINUTES_KEY),
+    AsyncStorage.getItem(SNOOZE_AFTER_MINUTES_KEY),
+  ]);
+
+  const beforeMinutes = clampSnoozeMinutes(beforeRaw, DEFAULT_SNOOZE_BEFORE_MINUTES);
+  const afterMinutes = clampSnoozeMinutes(afterRaw, DEFAULT_SNOOZE_AFTER_MINUTES);
+
+  return { beforeMinutes, afterMinutes };
 };
 
 // --- GETTERS ---
