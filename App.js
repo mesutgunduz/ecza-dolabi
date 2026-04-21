@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Home, Users, Pill, Clock, UserCircle } from 'lucide-react-native';
+import { Home, Users, Pill, Clock, UserCircle, ShoppingCart } from 'lucide-react-native';
 
 import DashboardScreen from './src/screens/DashboardScreen';
 import PersonsScreen from './src/screens/PersonsScreen';
@@ -11,6 +11,7 @@ import LogsScreen from './src/screens/LogsScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import PersonSelectScreen from './src/screens/PersonSelectScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import ReorderScreen from './src/screens/ReorderScreen';
 import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, clearActivePerson, clearAllData } from './src/utils/storage.js';
 import { requestNotificationPermissions } from './src/utils/notifications';
 
@@ -24,6 +25,7 @@ function MainTabs({ activePerson, onPersonChange, onFullLogout }) {
           if (route.name === 'Ana Ekran') return <Home color={color} size={size} />;
           if (route.name === 'Kişiler') return <Users color={color} size={size} />;
           if (route.name === 'İlaçlar') return <Pill color={color} size={size} />;
+          if (route.name === 'Alınacaklar') return <ShoppingCart color={color} size={size} />;
           if (route.name === 'Geçmiş') return <Clock color={color} size={size} />;
           if (route.name === 'Profilim') return <UserCircle color={color} size={size} />;
           return null;
@@ -43,6 +45,9 @@ function MainTabs({ activePerson, onPersonChange, onFullLogout }) {
           <Tab.Screen name="Kişiler" component={PersonsScreen} />
           <Tab.Screen name="İlaçlar" options={{ headerShown: false }}>
             {() => <MedsScreen activePerson={activePerson} />}
+          </Tab.Screen>
+          <Tab.Screen name="Alınacaklar">
+            {() => <ReorderScreen />}
           </Tab.Screen>
         </>
       )}
