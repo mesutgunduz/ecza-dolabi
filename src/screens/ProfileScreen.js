@@ -3,8 +3,13 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, ActivityIndicator
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime } from '../utils/storage';
-import { LogOut, Pill, Clock, CheckCircle, Shield, Users, Check } from 'lucide-react-native';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import * as DocumentPicker from 'expo-document-picker';
+import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime, getFamilyCode } from '../utils/storage';
+import { db } from '../utils/firebase';
+import { collection, addDoc, getDocs, deleteDoc, doc, query } from 'firebase/firestore';
+import { LogOut, Pill, Clock, CheckCircle, Shield, Users, Check, Download, Upload } from 'lucide-react-native';
 
 export default function ProfileScreen({ activePerson, onPersonChange, onFullLogout }) {
   const [myMeds, setMyMeds] = useState([]);
@@ -81,6 +86,120 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     }
   };
 
+  const handleExport = async () => {
+    try {
+      setLoading(true);
+      const code = await getFamilyCode();
+      if (!code) { Alert.alert('Hata', 'Aile kodu bulunamadı.'); return; }
+
+      const [meds, logs, persons] = await Promise.all([getMeds(), getLogs(), getPersons()]);
+      const rollover = await getDayRolloverTime();
+
+      const backup = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        familyCode: code,
+        rolloverTime: rollover,
+        meds,
+        logs,
+        persons,
+      };
+
+      const json = JSON.stringify(backup, null, 2);
+      const now = new Date();
+      const dateStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+      const fileName = `ecza-dolabi-yedek-${dateStr}.json`;
+      const fileUri = FileSystem.documentDirectory + fileName;
+
+      await FileSystem.writeAsStringAsync(fileUri, json, { encoding: FileSystem.EncodingType.UTF8 });
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(fileUri, { mimeType: 'application/json', dialogTitle: 'Yedeği Paylaş veya Kaydet' });
+      } else {
+        Alert.alert('Dışa Aktarıldı', `Dosya kaydedildi:\n${fileUri}`);
+      }
+    } catch (e) {
+      console.error('Export failed:', e);
+      Alert.alert('Hata', 'Dışa aktarma başarısız.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImport = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/json',
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return;
+
+      const fileUri = result.assets?.[0]?.uri;
+      if (!fileUri) { Alert.alert('Hata', 'Dosya seçilemedi.'); return; }
+
+      const json = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.UTF8 });
+      const backup = JSON.parse(json);
+
+      if (!backup?.version || !backup?.meds || !backup?.persons) {
+        Alert.alert('Hata', 'Geçersiz yedek dosyası.');
+        return;
+      }
+
+      if (Platform.OS === 'web') {
+        if (!window.confirm(`${backup.meds.length} ilaç, ${backup.persons.length} kişi ve ${backup.logs?.length || 0} geçmiş kaydı içe aktarılacak. Mevcut veriler silinecek. Devam edilsin mi?`)) return;
+      } else {
+        await new Promise((resolve, reject) => {
+          Alert.alert(
+            'Veri İçe Aktar',
+            `${backup.meds.length} ilaç, ${backup.persons.length} kişi ve ${backup.logs?.length || 0} geçmiş kaydı içe aktarılacak.\n\nMEVCUT VERİLER SİLİNECEK. Devam edilsin mi?`,
+            [
+              { text: 'Vazgeç', style: 'cancel', onPress: () => reject('cancelled') },
+              { text: 'İçe Aktar', style: 'destructive', onPress: resolve },
+            ]
+          );
+        }).catch(() => { return Promise.reject('cancelled'); });
+      }
+
+      setLoading(true);
+      const code = await getFamilyCode();
+
+      const deleteCollection = async (name) => {
+        const snap = await getDocs(query(collection(db, 'families', code, name)));
+        await Promise.all(snap.docs.map(d => deleteDoc(doc(db, 'families', code, name, d.id))));
+      };
+
+      await deleteCollection('meds');
+      await deleteCollection('logs');
+      await deleteCollection('persons');
+
+      await Promise.all(backup.persons.map(p => {
+        const { id, ...data } = p;
+        return addDoc(collection(db, 'families', code, 'persons'), data);
+      }));
+      await Promise.all(backup.meds.map(m => {
+        const { id, ...data } = m;
+        return addDoc(collection(db, 'families', code, 'meds'), data);
+      }));
+      await Promise.all((backup.logs || []).map(l => {
+        const { id, ...data } = l;
+        return addDoc(collection(db, 'families', code, 'logs'), data);
+      }));
+
+      if (backup.rolloverTime) await setDayRolloverTime(backup.rolloverTime);
+
+      Alert.alert('Başarılı', 'Veriler içe aktarıldı. Uygulama yenileniyor...');
+      await loadData();
+    } catch (e) {
+      if (e === 'cancelled') return;
+      console.error('Import failed:', e);
+      Alert.alert('Hata', 'İçe aktarma başarısız: ' + String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleRolloverChange = async (delta) => {
     const [h] = String(rolloverTime || '00:00').split(':').map(Number);
     const nextHour = (Number.isNaN(h) ? 0 : h + delta + 24) % 24;
@@ -150,6 +269,25 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
         </>
       )}
 
+      {activePerson?.canSeeAll && (
+        <>
+          <Text style={styles.sectionTitle}>💾 Veri Yedekleme</Text>
+          <View style={styles.backupBox}>
+            <Text style={styles.backupDesc}>Tüm ilaç, kişi ve geçmiş verilerini JSON dosyası olarak dışa aktarın veya önceki bir yedeği geri yükleyin.</Text>
+            <View style={styles.backupBtns}>
+              <TouchableOpacity style={styles.exportBtn} onPress={handleExport}>
+                <Download color="#fff" size={16} />
+                <Text style={styles.backupBtnText}>Dışa Aktar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.importBtn} onPress={handleImport}>
+                <Upload color="#fff" size={16} />
+                <Text style={styles.backupBtnText}>İçe Aktar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
+      )}
+
       <TouchableOpacity style={styles.fullLogout} onPress={() => onFullLogout()}>
         <LogOut color="#EF4444" size={20} />
         <Text style={styles.logoutText}>Sistemden Çıkış Yap</Text>
@@ -184,5 +322,11 @@ const styles = StyleSheet.create({
   rolloverTime: { marginHorizontal: 16, fontSize: 20, fontWeight: 'bold', color: '#111827' },
   rolloverHint: { marginTop: 8, fontSize: 11, color: '#9CA3AF', textAlign: 'center' },
   fullLogout: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 30, padding: 15, backgroundColor: '#FEF2F2', borderRadius: 12 },
-  logoutText: { color: '#EF4444', fontWeight: 'bold', marginLeft: 8 }
+  logoutText: { color: '#EF4444', fontWeight: 'bold', marginLeft: 8 },
+  backupBox: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginTop: 6 },
+  backupDesc: { fontSize: 12, color: '#6B7280', marginBottom: 12 },
+  backupBtns: { flexDirection: 'row', gap: 10 },
+  exportBtn: { flex: 1, backgroundColor: '#059669', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 8 },
+  importBtn: { flex: 1, backgroundColor: '#3B82F6', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 8 },
+  backupBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 12, marginLeft: 6 },
 });
