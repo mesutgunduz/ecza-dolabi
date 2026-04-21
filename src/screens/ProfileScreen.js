@@ -4,8 +4,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import * as DocumentPicker from 'expo-document-picker';
+import Constants from 'expo-constants';
 import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime, getFamilyCode } from '../utils/storage';
 import { db } from '../utils/firebase';
 import { collection, addDoc, getDocs, deleteDoc, doc, query } from 'firebase/firestore';
@@ -92,7 +91,12 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       const code = await getFamilyCode();
       if (!code) { Alert.alert('Hata', 'Aile kodu bulunamadı.'); return; }
 
-      const [meds, logs, persons] = await Promise.all([getMeds(), getLogs(), getPersons()]);
+      if (Constants.appOwnership === 'expo') {
+        Alert.alert('Development Build Gerekli', 'Dosya paylaşımı için development build ile açmanız gerekir.');
+        return;
+      }
+
+      const [allMeds, allLogs, allPersons] = await Promise.all([getMeds(), getLogs(), getPersons()]);
       const rollover = await getDayRolloverTime();
 
       const backup = {
@@ -100,9 +104,9 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
         exportedAt: new Date().toISOString(),
         familyCode: code,
         rolloverTime: rollover,
-        meds,
-        logs,
-        persons,
+        meds: allMeds,
+        logs: allLogs,
+        persons: allPersons,
       };
 
       const json = JSON.stringify(backup, null, 2);
@@ -111,11 +115,13 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       const fileName = `ecza-dolabi-yedek-${dateStr}.json`;
       const fileUri = FileSystem.documentDirectory + fileName;
 
-      await FileSystem.writeAsStringAsync(fileUri, json, { encoding: FileSystem.EncodingType.UTF8 });
+      await FileSystem.writeAsStringAsync(fileUri, json, { encoding: 'utf8' });
 
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(fileUri, { mimeType: 'application/json', dialogTitle: 'Yedeği Paylaş veya Kaydet' });
+      let SharingMod;
+      try { SharingMod = await import('expo-sharing'); } catch { SharingMod = null; }
+
+      if (SharingMod && await SharingMod.isAvailableAsync()) {
+        await SharingMod.shareAsync(fileUri, { mimeType: 'application/json', dialogTitle: 'Yedeği Paylaş veya Kaydet' });
       } else {
         Alert.alert('Dışa Aktarıldı', `Dosya kaydedildi:\n${fileUri}`);
       }
@@ -129,17 +135,24 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
 
   const handleImport = async () => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: 'application/json',
-        copyToCacheDirectory: true,
-      });
+      if (Constants.appOwnership === 'expo') {
+        Alert.alert('Development Build Gerekli', 'İçe aktarma için development build ile açmanız gerekir.');
+        return;
+      }
 
+      let DocumentPicker;
+      try { DocumentPicker = await import('expo-document-picker'); } catch {
+        Alert.alert('Hata', 'Dosya seçici bu ortamda kullanılamıyor.');
+        return;
+      }
+
+      const result = await DocumentPicker.getDocumentAsync({ type: 'application/json', copyToCacheDirectory: true });
       if (result.canceled) return;
 
       const fileUri = result.assets?.[0]?.uri;
       if (!fileUri) { Alert.alert('Hata', 'Dosya seçilemedi.'); return; }
 
-      const json = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.UTF8 });
+      const json = await FileSystem.readAsStringAsync(fileUri, { encoding: 'utf8' });
       const backup = JSON.parse(json);
 
       if (!backup?.version || !backup?.meds || !backup?.persons) {
@@ -147,20 +160,16 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
         return;
       }
 
-      if (Platform.OS === 'web') {
-        if (!window.confirm(`${backup.meds.length} ilaç, ${backup.persons.length} kişi ve ${backup.logs?.length || 0} geçmiş kaydı içe aktarılacak. Mevcut veriler silinecek. Devam edilsin mi?`)) return;
-      } else {
-        await new Promise((resolve, reject) => {
-          Alert.alert(
-            'Veri İçe Aktar',
-            `${backup.meds.length} ilaç, ${backup.persons.length} kişi ve ${backup.logs?.length || 0} geçmiş kaydı içe aktarılacak.\n\nMEVCUT VERİLER SİLİNECEK. Devam edilsin mi?`,
-            [
-              { text: 'Vazgeç', style: 'cancel', onPress: () => reject('cancelled') },
-              { text: 'İçe Aktar', style: 'destructive', onPress: resolve },
-            ]
-          );
-        }).catch(() => { return Promise.reject('cancelled'); });
-      }
+      await new Promise((resolve, reject) => {
+        Alert.alert(
+          'Veri İçe Aktar',
+          `${backup.meds.length} ilaç, ${backup.persons.length} kişi ve ${backup.logs?.length || 0} geçmiş kaydı içe aktarılacak.\n\nMEVCUT VERİLER SİLİNECEK. Devam edilsin mi?`,
+          [
+            { text: 'Vazgeç', style: 'cancel', onPress: () => reject('cancelled') },
+            { text: 'İçe Aktar', style: 'destructive', onPress: resolve },
+          ]
+        );
+      }).catch(() => { return Promise.reject('cancelled'); });
 
       setLoading(true);
       const code = await getFamilyCode();
@@ -174,22 +183,13 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       await deleteCollection('logs');
       await deleteCollection('persons');
 
-      await Promise.all(backup.persons.map(p => {
-        const { id, ...data } = p;
-        return addDoc(collection(db, 'families', code, 'persons'), data);
-      }));
-      await Promise.all(backup.meds.map(m => {
-        const { id, ...data } = m;
-        return addDoc(collection(db, 'families', code, 'meds'), data);
-      }));
-      await Promise.all((backup.logs || []).map(l => {
-        const { id, ...data } = l;
-        return addDoc(collection(db, 'families', code, 'logs'), data);
-      }));
+      await Promise.all(backup.persons.map(p => { const { id, ...data } = p; return addDoc(collection(db, 'families', code, 'persons'), data); }));
+      await Promise.all(backup.meds.map(m => { const { id, ...data } = m; return addDoc(collection(db, 'families', code, 'meds'), data); }));
+      await Promise.all((backup.logs || []).map(l => { const { id, ...data } = l; return addDoc(collection(db, 'families', code, 'logs'), data); }));
 
       if (backup.rolloverTime) await setDayRolloverTime(backup.rolloverTime);
 
-      Alert.alert('Başarılı', 'Veriler içe aktarıldı. Uygulama yenileniyor...');
+      Alert.alert('Başarılı', 'Veriler içe aktarıldı.');
       await loadData();
     } catch (e) {
       if (e === 'cancelled') return;
