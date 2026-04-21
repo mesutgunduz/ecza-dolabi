@@ -338,7 +338,7 @@ export default function DashboardScreen({ activePerson }) {
 
                   {!isScheduledToday && (
                     <View style={styles.notPlannedTag}>
-                      <Text style={styles.notPlannedTagText}>Bugun bu ilac planli degil (haftalik plana gore)</Text>
+                      <Text style={styles.notPlannedTagText}>Bugun kullanilmayacak</Text>
                     </View>
                   )}
                 </View>
