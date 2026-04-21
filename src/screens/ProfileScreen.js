@@ -130,8 +130,12 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
         Alert.alert('Dışa Aktarıldı', `Dosya kaydedildi:\n${fileUri}`);
       }
     } catch (e) {
-      console.error('Export failed:', e);
-      Alert.alert('Hata', 'Dışa aktarma başarısız.');
+      const msg = String(e?.message || e || '');
+      if (/ExpoSharing|native module/i.test(msg)) {
+        Alert.alert('Paylaşım Kullanılamıyor', 'Bu cihaz/oturumda dosya paylaşımı desteklenmiyor. Lütfen development build kullanın veya farklı bir cihazda deneyin.');
+      } else {
+        Alert.alert('Hata', 'Dışa aktarma başarısız.');
+      }
     } finally {
       setLoading(false);
     }
@@ -197,7 +201,6 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       await loadData();
     } catch (e) {
       if (e === 'cancelled') return;
-      console.error('Import failed:', e);
       Alert.alert('Hata', 'İçe aktarma başarısız: ' + String(e?.message || e));
     } finally {
       setLoading(false);
