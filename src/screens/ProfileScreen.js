@@ -3,7 +3,7 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, ActivityIndicator
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
 import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime, getFamilyCode } from '../utils/storage';
 import { db } from '../utils/firebase';
@@ -117,11 +117,15 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
 
       await FileSystem.writeAsStringAsync(fileUri, json, { encoding: 'utf8' });
 
-      let SharingMod;
-      try { SharingMod = await import('expo-sharing'); } catch { SharingMod = null; }
+      let SharingModRaw;
+      try { SharingModRaw = await import('expo-sharing'); } catch { SharingModRaw = null; }
 
-      if (SharingMod && await SharingMod.isAvailableAsync()) {
-        await SharingMod.shareAsync(fileUri, { mimeType: 'application/json', dialogTitle: 'Yedeği Paylaş veya Kaydet' });
+      const SharingMod = SharingModRaw?.default || SharingModRaw;
+      const isAvailableAsync = SharingMod?.isAvailableAsync;
+      const shareAsync = SharingMod?.shareAsync;
+
+      if (typeof isAvailableAsync === 'function' && typeof shareAsync === 'function' && await isAvailableAsync()) {
+        await shareAsync(fileUri, { mimeType: 'application/json', dialogTitle: 'Yedeği Paylaş veya Kaydet' });
       } else {
         Alert.alert('Dışa Aktarıldı', `Dosya kaydedildi:\n${fileUri}`);
       }
