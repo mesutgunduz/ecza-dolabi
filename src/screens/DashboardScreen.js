@@ -21,6 +21,15 @@ export default function DashboardScreen({ activePerson }) {
 
   const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
   const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
+  const logicalWeekDay = useMemo(() => {
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const logicalNow = new Date(now);
+    if (nowMinutes < rolloverMinutes) {
+      logicalNow.setDate(logicalNow.getDate() - 1);
+    }
+    return logicalNow.getDay();
+  }, [rolloverMinutes]);
 
   const loadData = async () => {
     try {
@@ -289,6 +298,10 @@ export default function DashboardScreen({ activePerson }) {
           const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
           const count = medUsageCounts[`${med.id}-${takerId}`] || 0;
           const isLimitReached = med.dailyDose && count >= med.dailyDose;
+          const selectedWeekDays = Array.isArray(med.weeklyDays)
+            ? med.weeklyDays.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+            : [];
+          const isScheduledToday = med.scheduleType !== 'weekly' || selectedWeekDays.includes(logicalWeekDay);
 
           return (
             <View key={med.id} style={styles.medCard}>
@@ -320,6 +333,12 @@ export default function DashboardScreen({ activePerson }) {
                           <Text style={styles.timeTagText}>{t}</Text>
                         </View>
                       ))}
+                    </View>
+                  )}
+
+                  {!isScheduledToday && (
+                    <View style={styles.notPlannedTag}>
+                      <Text style={styles.notPlannedTagText}>Bugun bu ilac planli degil (haftalik plana gore)</Text>
                     </View>
                   )}
                 </View>
@@ -376,6 +395,8 @@ const styles = StyleSheet.create({
   reminderRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 5 },
   timeTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 5, marginBottom: 2, borderWidth: 1, borderColor: '#D1D5DB' },
   timeTagText: { fontSize: 10, color: '#059669', fontWeight: 'bold', marginLeft: 3 },
+  notPlannedTag: { marginTop: 8, backgroundColor: '#FFEDD5', borderWidth: 1, borderColor: '#FDBA74', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8 },
+  notPlannedTagText: { fontSize: 11, color: '#9A3412', fontWeight: '700' },
   emptyBox: { padding: 40, alignItems: 'center' },
   emptyText: { color: '#9CA3AF', fontStyle: 'italic' },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 12, marginBottom: 20, borderWidth: 1, borderColor: '#E5E7EB', height: 46 },
