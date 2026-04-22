@@ -4,9 +4,9 @@ import {
   Alert, ActivityIndicator, Linking, ScrollView
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getLogs, getMeds, getPersons, deleteLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
+import { getLogs, getMeds, getPersons, deleteLog, editLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
-import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText } from 'lucide-react-native';
+import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText, Edit2 } from 'lucide-react-native';
 
 export default function LogsScreen({ activePerson }) {
   const [logs, setLogs] = useState([]);
@@ -139,6 +139,47 @@ export default function LogsScreen({ activePerson }) {
         }
       }
     ]);
+  };
+
+  const handleEditTime = (log) => {
+    const currentHour = log.time?.split(':')[0] || '00';
+    const currentMinute = log.time?.split(':')[1] || '00';
+
+    Alert.prompt(
+      'Zamanı Düzelt',
+      `Yeni saati girin (HH:MM formatında)\nÖnceki saat: ${log.time}`,
+      [
+        {
+          text: 'İptal',
+          style: 'cancel'
+        },
+        {
+          text: 'Kaydet',
+          onPress: async (newTime) => {
+            if (!newTime || !newTime.match(/^\d{2}:\d{2}$/)) {
+              Alert.alert('Hata', 'HH:MM formatında girin (örn: 14:30)');
+              return;
+            }
+
+            const [hours, minutes] = newTime.split(':').map(Number);
+            if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+              Alert.alert('Hata', 'Geçerli bir saat girin');
+              return;
+            }
+
+            try {
+              await editLog(log.id, { time: newTime });
+              await loadData();
+              Alert.alert('Başarılı', 'Saat güncellendi');
+            } catch (err) {
+              Alert.alert('Hata', 'Saat güncellenemedi');
+            }
+          }
+        }
+      ],
+      'plain-text',
+      currentHour + ':' + currentMinute
+    );
   };
 
   const handleShare = async (log) => {
@@ -334,6 +375,9 @@ export default function LogsScreen({ activePerson }) {
               </View>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <TouchableOpacity onPress={() => handleEditTime(item)} style={styles.actionBtn}>
+                <Edit2 color="#3B82F6" size={20} />
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => handleShare(item)} style={styles.actionBtn}>
                 <Share2 color="#25D366" size={20} />
               </TouchableOpacity>

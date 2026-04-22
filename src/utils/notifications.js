@@ -5,6 +5,8 @@ const MED_REMINDER_CHANNEL_ID = 'med-reminders-v2';
 const REMINDER_LOOKAHEAD_DAYS = 14;
 export const SNOOZE_10_ACTION_ID = 'med-snooze-10';
 export const SNOOZE_30_ACTION_ID = 'med-snooze-30';
+export const TAKE_MED_ACTION_ID = 'med-take-now';
+export const CLOSE_ACTION_ID = 'med-close';
 const MED_REMINDER_CATEGORY_ID = 'med-reminder-actions';
 
 Notifications.setNotificationHandler({
@@ -37,12 +39,21 @@ export const requestNotificationPermissions = async () => {
 export const configureNotificationCategories = async () => {
   await Notifications.setNotificationCategoryAsync(MED_REMINDER_CATEGORY_ID, [
     {
+      identifier: TAKE_MED_ACTION_ID,
+      buttonTitle: 'Şimdi Kullan',
+    },
+    {
       identifier: SNOOZE_10_ACTION_ID,
       buttonTitle: '10 dk ertele',
     },
     {
       identifier: SNOOZE_30_ACTION_ID,
       buttonTitle: '30 dk ertele',
+    },
+    {
+      identifier: CLOSE_ACTION_ID,
+      buttonTitle: 'Kapat',
+      isDestructive: false,
     },
   ]);
 };
@@ -125,7 +136,14 @@ export const scheduleMedReminders = async (med) => {
         content: {
           title: 'Ilac Zamani',
           body: `${med.name} alma zamani geldi.`,
-          data: { medId: med.id, medName: med.name, hour, minute, source: 'med-reminder' },
+          data: { 
+            medId: med.id, 
+            medName: med.name, 
+            hour, 
+            minute, 
+            source: 'med-reminder',
+            personId: med.personId || 'all',
+          },
           categoryIdentifier: MED_REMINDER_CATEGORY_ID,
           sound: 'default',
           priority: Notifications.AndroidNotificationPriority.MAX,

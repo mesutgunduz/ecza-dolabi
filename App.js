@@ -13,13 +13,15 @@ import LoginScreen from './src/screens/LoginScreen';
 import PersonSelectScreen from './src/screens/PersonSelectScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ReorderScreen from './src/screens/ReorderScreen';
-import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, clearActivePerson, clearAllData } from './src/utils/storage.js';
+import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, clearActivePerson, clearAllData, markAsTaken } from './src/utils/storage.js';
 import {
   requestNotificationPermissions,
   configureNotificationCategories,
   scheduleReminderSnooze,
   SNOOZE_10_ACTION_ID,
   SNOOZE_30_ACTION_ID,
+  TAKE_MED_ACTION_ID,
+  CLOSE_ACTION_ID,
 } from './src/utils/notifications';
 
 const Tab = createBottomTabNavigator();
@@ -105,22 +107,31 @@ export default function App() {
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => {
       const actionId = response?.actionIdentifier;
-      if (actionId !== SNOOZE_10_ACTION_ID && actionId !== SNOOZE_30_ACTION_ID) return;
-
       const data = response?.notification?.request?.content?.data || {};
-      const snoozeMinutes = actionId === SNOOZE_10_ACTION_ID ? 10 : 30;
 
-      await scheduleReminderSnooze({
-        medId: data.medId,
-        medName: data.medName,
-        minutes: snoozeMinutes,
-      });
+      if (actionId === SNOOZE_10_ACTION_ID || actionId === SNOOZE_30_ACTION_ID) {
+        const snoozeMinutes = actionId === SNOOZE_10_ACTION_ID ? 10 : 30;
+
+        await scheduleReminderSnooze({
+          medId: data.medId,
+          medName: data.medName,
+          minutes: snoozeMinutes,
+        });
+      } else if (actionId === TAKE_MED_ACTION_ID) {
+        // Mark med as taken from notification
+        const takerId = data.personId && data.personId !== 'all' ? data.personId : activePerson?.id;
+        if (takerId) {
+          await markAsTaken(data.medId, takerId, 1, data.medName, null);
+        }
+      } else if (actionId === CLOSE_ACTION_ID) {
+        // Notification is dismissed, no action needed
+      }
     });
 
     return () => {
       subscription.remove();
     };
-  }, []);
+  }, [activePerson]);
 
   const handleLogin = async (code) => {
     await setFamilyCode(code);

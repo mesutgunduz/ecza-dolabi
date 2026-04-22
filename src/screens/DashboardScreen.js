@@ -6,7 +6,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
-import { scheduleReminderSnooze } from '../utils/notifications';
+import { scheduleReminderSnooze, cancelMedReminders } from '../utils/notifications';
 import { 
   Check, AlertCircle, Pill, Clock, Search
 } from 'lucide-react-native';
@@ -193,12 +193,58 @@ export default function DashboardScreen({ activePerson }) {
 
   const handleTakeMed = async (med) => {
     try {
-      const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
+      // For shared meds, ask who is taking it
+      if (med.personId === 'all') {
+        const personOptions = persons.filter(p => p.id !== 'all');
+        
+        if (personOptions.length === 0) {
+          Alert.alert("Hata", "Kişi bulunamadı.");
+          return;
+        }
+
+        if (Platform.OS === 'web') {
+          const personName = window.prompt(
+            `${med.name} kimin tarafından kullanılıyor?\n\nKullanılabilir: ${personOptions.map(p => p.name).join(', ')}`
+          );
+          if (!personName) return;
+          const selectedPerson = personOptions.find(p => p.name === personName);
+          if (selectedPerson) {
+            await processTakeMed(med, selectedPerson.id, selectedPerson.name);
+          } else {
+            Alert.alert("Hata", "Geçersiz kişi ismi.");
+          }
+        } else {
+          Alert.alert(
+            `${med.name} - Kimin kullandığı?`,
+            "Lütfen seçin:",
+            [
+              ...personOptions.map(person => ({
+                text: person.name,
+                onPress: () => processTakeMed(med, person.id, person.name)
+              })),
+              { text: "İptal", style: "cancel" }
+            ]
+          );
+        }
+        return;
+      }
+
+      const takerId = med.personId || activePerson.id;
       const takerObj = persons.find(p => p.id === takerId) || activePerson;
       const takerName = takerObj.name || 'Bilinmeyen';
+      
+      await processTakeMed(med, takerId, takerName);
+    } catch (err) {
+      Alert.alert("Hata", "Bir sorun oluştu: " + err.message);
+    }
+  };
 
+  const processTakeMed = async (med, takerId, takerName) => {
+    try {
       const proceed = async () => {
         setLoading(true);
+        // Cancel any scheduled notifications for this med
+        await cancelMedReminders(med);
         const success = await markAsTaken(med.id, takerId, parseFloat(med.consumePerUsage || 1), med.name, takerName);
         if (success) {
           await loadData();
