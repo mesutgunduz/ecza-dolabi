@@ -143,6 +143,7 @@ export const scheduleMedReminders = async (med) => {
             minute, 
             source: 'med-reminder',
             personId: med.personId || 'all',
+            consumeAmt: Number(med.consumePerUsage || 1),
           },
           categoryIdentifier: MED_REMINDER_CATEGORY_ID,
           sound: 'default',

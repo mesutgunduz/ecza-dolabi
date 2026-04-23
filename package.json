@@ -6,7 +6,10 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "dev:client": "expo start --dev-client",
+    "build:dev:android": "eas build -p android --profile development",
+    "dev:all": "echo Build once: npm run build:dev:android && echo Install APK on phone && echo Start local dev client: npm run dev:client"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

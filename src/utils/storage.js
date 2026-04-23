@@ -257,7 +257,25 @@ export const deletePerson = async (id) => {
 export const deleteLog = async (id) => {
   const code = await getFamilyCode();
   if (!code) return;
-  await deleteDoc(doc(db, "families", code, "logs", id));
+
+  const logRef = doc(db, "families", code, "logs", id);
+  const logSnap = await getDoc(logRef);
+  const logData = logSnap.exists() ? logSnap.data() : null;
+
+  // If a usage log is deleted, return consumed amount back to stock.
+  if (logData?.medId) {
+    const medRef = doc(db, "families", code, "meds", logData.medId);
+    const medSnap = await getDoc(medRef);
+    if (medSnap.exists()) {
+      const medData = medSnap.data();
+      const currentQty = parseFloat(medData?.quantity || 0);
+      const consumedQty = parseFloat(logData?.dosage || 1);
+      const restoredQty = currentQty + (Number.isFinite(consumedQty) ? consumedQty : 1);
+      await updateDoc(medRef, { quantity: restoredQty.toString() });
+    }
+  }
+
+  await deleteDoc(logRef);
 };
 
 // --- ACTIONS ---

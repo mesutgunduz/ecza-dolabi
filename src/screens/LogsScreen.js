@@ -1,14 +1,14 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  Alert, ActivityIndicator, Linking, ScrollView
+  Alert, ActivityIndicator, Linking, ScrollView, Modal, TextInput, AppState
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getLogs, getMeds, getPersons, deleteLog, editLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText, Edit2 } from 'lucide-react-native';
 
-export default function LogsScreen({ activePerson }) {
+export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
   const [logs, setLogs] = useState([]);
   const [persons, setPersons] = useState([]);
   const [meds, setMeds] = useState([]);
@@ -16,6 +16,9 @@ export default function LogsScreen({ activePerson }) {
   const [rolloverTime, setRolloverTime] = useState('00:00');
   const [activeTab, setActiveTab] = useState('history'); // 'history' | 'stats'
   const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingLog, setEditingLog] = useState(null);
+  const [editTimeInput, setEditTimeInput] = useState('');
 
   const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
   const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
@@ -47,6 +50,22 @@ export default function LogsScreen({ activePerson }) {
   };
 
   useFocusEffect(useCallback(() => { loadData(); }, [activePerson]));
+
+  useEffect(() => {
+    loadData();
+  }, [dataRefreshKey]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        loadData();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [activePerson, dataRefreshKey]);
 
   const missedDoseItems = useMemo(() => {
     const now = new Date();
@@ -142,44 +161,36 @@ export default function LogsScreen({ activePerson }) {
   };
 
   const handleEditTime = (log) => {
-    const currentHour = log.time?.split(':')[0] || '00';
-    const currentMinute = log.time?.split(':')[1] || '00';
+    setEditingLog(log);
+    setEditTimeInput(log?.time || '00:00');
+    setEditModalVisible(true);
+  };
 
-    Alert.prompt(
-      'Zamanı Düzelt',
-      `Yeni saati girin (HH:MM formatında)\nÖnceki saat: ${log.time}`,
-      [
-        {
-          text: 'İptal',
-          style: 'cancel'
-        },
-        {
-          text: 'Kaydet',
-          onPress: async (newTime) => {
-            if (!newTime || !newTime.match(/^\d{2}:\d{2}$/)) {
-              Alert.alert('Hata', 'HH:MM formatında girin (örn: 14:30)');
-              return;
-            }
+  const handleSaveEditedTime = async () => {
+    const newTime = String(editTimeInput || '').trim();
+    if (!newTime || !newTime.match(/^\d{2}:\d{2}$/)) {
+      Alert.alert('Hata', 'HH:MM formatında girin (örn: 14:30)');
+      return;
+    }
 
-            const [hours, minutes] = newTime.split(':').map(Number);
-            if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
-              Alert.alert('Hata', 'Geçerli bir saat girin');
-              return;
-            }
+    const [hours, minutes] = newTime.split(':').map(Number);
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+      Alert.alert('Hata', 'Geçerli bir saat girin');
+      return;
+    }
 
-            try {
-              await editLog(log.id, { time: newTime });
-              await loadData();
-              Alert.alert('Başarılı', 'Saat güncellendi');
-            } catch (err) {
-              Alert.alert('Hata', 'Saat güncellenemedi');
-            }
-          }
-        }
-      ],
-      'plain-text',
-      currentHour + ':' + currentMinute
-    );
+    if (!editingLog?.id) return;
+
+    try {
+      await editLog(editingLog.id, { time: newTime });
+      setEditModalVisible(false);
+      setEditingLog(null);
+      setEditTimeInput('');
+      await loadData();
+      Alert.alert('Başarılı', 'Saat güncellendi');
+    } catch (err) {
+      Alert.alert('Hata', 'Saat güncellenemedi');
+    }
   };
 
   const handleShare = async (log) => {
@@ -390,6 +401,38 @@ export default function LogsScreen({ activePerson }) {
         ListEmptyComponent={<Text style={styles.empty}>Henüz bir kayıt yok.</Text>}
         contentContainerStyle={{ padding: 16, paddingTop: missedDoseItems.length > 0 ? 6 : 16 }}
       />
+
+      <Modal
+        visible={editModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Zamanı Düzelt</Text>
+            <Text style={styles.modalSubTitle}>HH:MM formatında saat girin</Text>
+            <TextInput
+              value={editTimeInput}
+              onChangeText={setEditTimeInput}
+              placeholder="Örn: 14:30"
+              keyboardType="numbers-and-punctuation"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.modalInput}
+              maxLength={5}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setEditModalVisible(false)}>
+                <Text style={styles.modalBtnCancelText}>İptal</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnSave]} onPress={handleSaveEditedTime}>
+                <Text style={styles.modalBtnSaveText}>Kaydet</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
         </>
       )}
     </View>
@@ -434,4 +477,15 @@ const styles = StyleSheet.create({
   statBar: { width: '100%', height: 6, backgroundColor: '#F3F4F6', borderRadius: 3, marginTop: 8, overflow: 'hidden' },
   statBarFill: { height: 6, borderRadius: 3 },
   statRateLabel: { fontSize: 11, fontWeight: '700', marginTop: 4 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalCard: { width: '100%', maxWidth: 360, backgroundColor: '#fff', borderRadius: 12, padding: 16 },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  modalSubTitle: { marginTop: 4, fontSize: 12, color: '#6B7280' },
+  modalInput: { marginTop: 12, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, color: '#111827' },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 14 },
+  modalBtn: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 8, marginLeft: 8 },
+  modalBtnCancel: { backgroundColor: '#F3F4F6' },
+  modalBtnSave: { backgroundColor: '#059669' },
+  modalBtnCancelText: { color: '#374151', fontWeight: '600' },
+  modalBtnSaveText: { color: '#fff', fontWeight: '700' },
 });

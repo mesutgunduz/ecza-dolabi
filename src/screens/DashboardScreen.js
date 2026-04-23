@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, ScrollView, TouchableOpacity, 
-  ActivityIndicator, Alert, Platform, TextInput
+  ActivityIndicator, Alert, Platform, TextInput, AppState
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
@@ -11,7 +11,7 @@ import {
   Check, AlertCircle, Pill, Clock, Search
 } from 'lucide-react-native';
 
-export default function DashboardScreen({ activePerson }) {
+export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
   const [meds, setMeds] = useState([]);
   const [persons, setPersons] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -62,6 +62,22 @@ export default function DashboardScreen({ activePerson }) {
   };
 
   useFocusEffect(useCallback(() => { loadData(); }, [activePerson]));
+
+  useEffect(() => {
+    loadData();
+  }, [dataRefreshKey]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        loadData();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [activePerson, dataRefreshKey]);
 
   const filteredMeds = useMemo(() => {
     let list = meds.filter(med => med.isActive !== false);
@@ -241,16 +257,41 @@ export default function DashboardScreen({ activePerson }) {
 
   const processTakeMed = async (med, takerId, takerName) => {
     try {
+      const consumeAmount = parseFloat(med.consumePerUsage || 1);
+
       const proceed = async () => {
-        setLoading(true);
         // Cancel any scheduled notifications for this med
         await cancelMedReminders(med);
-        const success = await markAsTaken(med.id, takerId, parseFloat(med.consumePerUsage || 1), med.name, takerName);
+
+        // Optimistic UI update for immediate feedback on dashboard
+        setMeds((prev) => prev.map((item) => {
+          if (item.id !== med.id) return item;
+          const currentQty = parseFloat(item.quantity || 0);
+          const nextQty = Math.max(0, currentQty - consumeAmount);
+          return { ...item, quantity: String(nextQty) };
+        }));
+
+        setLogs((prev) => [
+          {
+            id: `tmp-${Date.now()}`,
+            medId: med.id,
+            medName: med.name,
+            personId: takerId,
+            takerName,
+            date: new Date().toLocaleDateString('tr-TR'),
+            time: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+            timestamp: Date.now(),
+            dosage: String(consumeAmount),
+          },
+          ...prev,
+        ]);
+
+        const success = await markAsTaken(med.id, takerId, consumeAmount, med.name, takerName);
         if (success) {
           await loadData();
         } else {
           Alert.alert("Hata", "İşlem kaydedilemedi.");
-          setLoading(false);
+          await loadData();
         }
       };
 

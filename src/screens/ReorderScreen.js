@@ -3,11 +3,13 @@ import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, Alert, Platform, ScrollView
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { getMeds } from '../utils/storage';
 import { AlertCircle, ShoppingCart, Plus, Trash2, Check } from 'lucide-react-native';
 
 const REORDER_THRESHOLD = 5;
+const REORDER_CART_KEY = 'REORDER_CART_ITEMS';
 
 export default function ReorderScreen() {
   const [meds, setMeds] = useState([]);
@@ -19,7 +21,10 @@ export default function ReorderScreen() {
     try {
       setLoading(true);
       const m = await getMeds();
+      const savedCartRaw = await AsyncStorage.getItem(REORDER_CART_KEY);
+      const savedCart = savedCartRaw ? JSON.parse(savedCartRaw) : [];
       setMeds(m);
+      setCart(Array.isArray(savedCart) ? savedCart : []);
 
       const needsReorder = m.filter(med => {
         const qty = parseFloat(med.quantity || 0);
@@ -39,21 +44,33 @@ export default function ReorderScreen() {
   const handleAddToCart = (med) => {
     setCart(prev => {
       if (prev.find(c => c.id === med.id)) return prev;
-      return [...prev, { id: med.id, name: med.name, form: med.form, unit: med.unit, quantity: med.quantity }];
+      const next = [...prev, { id: med.id, name: med.name, form: med.form, unit: med.unit, quantity: med.quantity }];
+      AsyncStorage.setItem(REORDER_CART_KEY, JSON.stringify(next));
+      return next;
     });
   };
 
   const handleRemoveFromCart = (medId) => {
-    setCart(prev => prev.filter(c => c.id !== medId));
+    setCart(prev => {
+      const next = prev.filter(c => c.id !== medId);
+      AsyncStorage.setItem(REORDER_CART_KEY, JSON.stringify(next));
+      return next;
+    });
   };
 
   const handleClearCart = () => {
     if (Platform.OS === 'web') {
-      if (window.confirm('Tüm liste temizlensin mi?')) setCart([]);
+      if (window.confirm('Tüm liste temizlensin mi?')) {
+        setCart([]);
+        AsyncStorage.removeItem(REORDER_CART_KEY);
+      }
     } else {
       Alert.alert('Listeyi Temizle', 'Tüm alışveriş listesi silinsin mi?', [
         { text: 'Vazgeç', style: 'cancel' },
-        { text: 'Temizle', style: 'destructive', onPress: () => setCart([]) },
+        { text: 'Temizle', style: 'destructive', onPress: () => {
+          setCart([]);
+          AsyncStorage.removeItem(REORDER_CART_KEY);
+        } },
       ]);
     }
   };
