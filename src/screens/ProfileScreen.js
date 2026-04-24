@@ -1,11 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, ActivityIndicator
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, ActivityIndicator, TextInput
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
-import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime, getFamilyCode, getSnoozeWindowSettings, setSnoozeWindowSettings } from '../utils/storage';
+import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime, getFamilyCode, getSnoozeWindowSettings, setSnoozeWindowSettings, changeFamilyPassword } from '../utils/storage';
 import { db } from '../utils/firebase';
 import { collection, addDoc, getDocs, deleteDoc, doc, query } from 'firebase/firestore';
 import { LogOut, Pill, Clock, CheckCircle, Shield, Users, Check, Download, Upload } from 'lucide-react-native';
@@ -19,6 +19,9 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
   const [rolloverTime, setRolloverTime] = useState('00:00');
   const [snoozeBeforeMinutes, setSnoozeBeforeMinutes] = useState(60);
   const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
+  const [currentFamilyPassword, setCurrentFamilyPassword] = useState('');
+  const [newFamilyPassword, setNewFamilyPassword] = useState('');
+  const [newFamilyPasswordAgain, setNewFamilyPasswordAgain] = useState('');
   const [loading, setLoading] = useState(true);
 
   const todayStr = (() => {
@@ -249,6 +252,35 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     });
   };
 
+  const handleFamilyPasswordUpdate = async () => {
+    if (!activePerson?.canSeeAll) return;
+
+    if (newFamilyPassword.trim().length < 4) {
+      Alert.alert('Hata', 'Yeni aile sifresi en az 4 karakter olmali.');
+      return;
+    }
+
+    if (newFamilyPassword !== newFamilyPasswordAgain) {
+      Alert.alert('Hata', 'Yeni sifreler birbiriyle ayni degil.');
+      return;
+    }
+
+    const result = await changeFamilyPassword(currentFamilyPassword, newFamilyPassword);
+    if (!result?.ok) {
+      if (result?.reason === 'wrong-password') {
+        Alert.alert('Hata', 'Mevcut aile sifresi hatali.');
+        return;
+      }
+      Alert.alert('Hata', 'Aile sifresi guncellenemedi.');
+      return;
+    }
+
+    setCurrentFamilyPassword('');
+    setNewFamilyPassword('');
+    setNewFamilyPasswordAgain('');
+    Alert.alert('Basarili', 'Aile sifresi guncellendi.');
+  };
+
   if (loading) return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
 
   return (
@@ -293,6 +325,39 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
 
       {activePerson?.canSeeAll && (
         <>
+          <Text style={styles.sectionTitle}>🔐 Aile Sifresi</Text>
+          <View style={styles.backupBox}>
+            <Text style={styles.backupDesc}>Aileye giris sifresini sadece yonetici guncelleyebilir.</Text>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Mevcut aile sifresi"
+              value={currentFamilyPassword}
+              onChangeText={setCurrentFamilyPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Yeni aile sifresi"
+              value={newFamilyPassword}
+              onChangeText={setNewFamilyPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Yeni sifre tekrar"
+              value={newFamilyPasswordAgain}
+              onChangeText={setNewFamilyPasswordAgain}
+              secureTextEntry
+              autoCapitalize="none"
+            />
+            <TouchableOpacity style={styles.exportBtn} onPress={handleFamilyPasswordUpdate}>
+              <Shield color="#fff" size={16} />
+              <Text style={styles.backupBtnText}>Sifreyi Guncelle</Text>
+            </TouchableOpacity>
+          </View>
+
           <Text style={styles.sectionTitle}>🕛 Gün Dönümü Saati</Text>
           <View style={styles.rolloverBox}>
             <Text style={styles.rolloverText}>Kaçırılan doz hesapları bu saate göre gün değiştirir.</Text>
@@ -406,6 +471,7 @@ const styles = StyleSheet.create({
   logoutText: { color: '#EF4444', fontWeight: 'bold', marginLeft: 8 },
   backupBox: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginTop: 6 },
   backupDesc: { fontSize: 12, color: '#6B7280', marginBottom: 12 },
+  passwordInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10, color: '#111827' },
   backupBtns: { flexDirection: 'row', gap: 10 },
   exportBtn: { flex: 1, backgroundColor: '#059669', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 8 },
   importBtn: { flex: 1, backgroundColor: '#3B82F6', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 8 },

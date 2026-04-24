@@ -4,9 +4,137 @@ import { collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc,
 
 export const FAMILY_KEY = 'FAMILY_CODE';
 
+const normalizeFamilyCode = (code) => String(code || '').trim().toUpperCase();
+
+const getFamilyDocRef = (code) => doc(db, 'families', normalizeFamilyCode(code));
+
+const verifyLegacyAdminPin = async (normalizedCode, adminPin) => {
+  const personsSnap = await getDocs(query(collection(db, 'families', normalizedCode, 'persons')));
+  const admins = personsSnap.docs
+    .map((d) => d.data())
+    .filter((p) => p?.canSeeAll === true);
+
+  const adminsWithPin = admins.filter((p) => String(p?.pin || '').trim().length > 0);
+  if (adminsWithPin.length === 0) {
+    return { ok: false, reason: 'admin-pin-not-configured' };
+  }
+
+  const entered = String(adminPin || '').trim();
+  if (!entered) return { ok: false, reason: 'admin-pin-required' };
+
+  const matched = adminsWithPin.some((p) => String(p.pin).trim() === entered);
+  if (!matched) return { ok: false, reason: 'admin-pin-invalid' };
+
+  return { ok: true };
+};
+
+const hasLegacyFamilyData = async (code) => {
+  const normalized = normalizeFamilyCode(code);
+  const checks = ['persons', 'meds', 'logs'];
+
+  for (const key of checks) {
+    const snap = await getDocs(query(collection(db, 'families', normalized, key)));
+    if (!snap.empty) return true;
+  }
+
+  return false;
+};
+
+export const createFamily = async (code, password) => {
+  const normalized = normalizeFamilyCode(code);
+  const pass = String(password || '').trim();
+
+  if (normalized.length < 4) return { ok: false, reason: 'invalid-code' };
+  if (pass.length < 4) return { ok: false, reason: 'invalid-password' };
+
+  const familyRef = getFamilyDocRef(normalized);
+  const existing = await getDoc(familyRef);
+  if (existing.exists()) return { ok: false, reason: 'code-exists' };
+
+  const legacyExists = await hasLegacyFamilyData(normalized);
+  if (legacyExists) return { ok: false, reason: 'code-exists' };
+
+  await setDoc(familyRef, {
+    familyCode: normalized,
+    familyPassword: pass,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  return { ok: true };
+};
+
+export const loginToFamily = async (code, password, adminPin = '') => {
+  const normalized = normalizeFamilyCode(code);
+  const pass = String(password || '').trim();
+
+  if (normalized.length < 4) return { ok: false, reason: 'invalid-code' };
+  if (pass.length < 4) return { ok: false, reason: 'invalid-password' };
+
+  const familyRef = getFamilyDocRef(normalized);
+  const existing = await getDoc(familyRef);
+
+  if (existing.exists()) {
+    const data = existing.data() || {};
+    const storedPassword = String(data.familyPassword || '');
+
+    if (!storedPassword) {
+      const pinCheck = await verifyLegacyAdminPin(normalized, adminPin);
+      if (!pinCheck.ok) return pinCheck;
+
+      await updateDoc(familyRef, { familyPassword: pass, updatedAt: Date.now() });
+      return { ok: true, migratedLegacy: true };
+    }
+
+    if (storedPassword !== pass) return { ok: false, reason: 'wrong-password' };
+    return { ok: true };
+  }
+
+  const legacyExists = await hasLegacyFamilyData(normalized);
+  if (!legacyExists) return { ok: false, reason: 'not-found' };
+
+  const pinCheck = await verifyLegacyAdminPin(normalized, adminPin);
+  if (!pinCheck.ok) return pinCheck;
+
+  // Legacy migration: existing family data had no root auth doc.
+  await setDoc(familyRef, {
+    familyCode: normalized,
+    familyPassword: pass,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    migratedFromLegacy: true,
+  }, { merge: true });
+
+  return { ok: true, migratedLegacy: true };
+};
+
+export const changeFamilyPassword = async (currentPassword, newPassword) => {
+  const code = await getFamilyCode();
+  if (!code) return { ok: false, reason: 'no-family' };
+
+  const current = String(currentPassword || '').trim();
+  const next = String(newPassword || '').trim();
+  if (next.length < 4) return { ok: false, reason: 'invalid-password' };
+
+  const familyRef = getFamilyDocRef(code);
+  const existing = await getDoc(familyRef);
+  if (!existing.exists()) return { ok: false, reason: 'not-found' };
+
+  const data = existing.data() || {};
+  const storedPassword = String(data.familyPassword || '');
+
+  if (storedPassword && storedPassword !== current) {
+    return { ok: false, reason: 'wrong-password' };
+  }
+
+  await updateDoc(familyRef, { familyPassword: next, updatedAt: Date.now() });
+  return { ok: true };
+};
+
 // --- AUTH & CONFIG ---
 export const setFamilyCode = async (code) => {
-  if (code) await AsyncStorage.setItem(FAMILY_KEY, code.trim().toUpperCase());
+  const normalized = normalizeFamilyCode(code);
+  if (normalized) await AsyncStorage.setItem(FAMILY_KEY, normalized);
 };
 
 export const getFamilyCode = async () => {

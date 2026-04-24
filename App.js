@@ -14,7 +14,7 @@ import LoginScreen from './src/screens/LoginScreen';
 import PersonSelectScreen from './src/screens/PersonSelectScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ReorderScreen from './src/screens/ReorderScreen';
-import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, getMeds, clearActivePerson, clearAllData, markAsTaken } from './src/utils/storage.js';
+import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, getMeds, clearActivePerson, clearAllData, markAsTaken, createFamily, loginToFamily } from './src/utils/storage.js';
 import {
   requestNotificationPermissions,
   configureNotificationCategories,
@@ -184,9 +184,16 @@ export default function App() {
     };
   }, [activePerson]);
 
-  const handleLogin = async (code) => {
+  const handleAuth = async ({ mode, code, password, adminPin }) => {
+    const op = mode === 'create'
+      ? await createFamily(code, password)
+      : await loginToFamily(code, password, adminPin);
+
+    if (!op?.ok) return op;
+
     await setFamilyCode(code);
     setIsAuthenticated(true);
+    return { ok: true };
   };
 
   const handlePersonSelected = (person) => {
@@ -215,7 +222,7 @@ export default function App() {
   return (
     <NavigationContainer>
       {!isAuthenticated ? (
-        <LoginScreen onLogin={handleLogin} />
+        <LoginScreen onAuth={handleAuth} />
       ) : !activePerson ? (
         <PersonSelectScreen onPersonSelected={handlePersonSelected} />
       ) : (

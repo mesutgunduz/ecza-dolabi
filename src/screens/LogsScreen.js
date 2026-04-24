@@ -95,11 +95,25 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
         if (!selectedDays.includes(logicalWeekDay)) return acc;
       }
 
-      const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
-      if (activePerson && !activePerson.canSeeAll && takerId !== activePerson.id) return acc;
+      const isSharedMed = med.personId === 'all';
+      const takerId = isSharedMed ? 'all' : med.personId;
 
-      const countKey = `${med.id}-${takerId}`;
-      const takenCount = counts[countKey] || 0;
+      if (!isSharedMed && activePerson && !activePerson.canSeeAll && takerId !== activePerson.id) return acc;
+
+      let takenCount = 0;
+      if (isSharedMed) {
+        if (activePerson?.canSeeAll) {
+          takenCount = Object.entries(counts)
+            .filter(([key]) => key.startsWith(`${med.id}-`))
+            .reduce((sum, [, value]) => sum + value, 0);
+        } else {
+          const ownKey = `${med.id}-${activePerson.id}`;
+          takenCount = counts[ownKey] || 0;
+        }
+      } else {
+        const countKey = `${med.id}-${takerId}`;
+        takenCount = counts[countKey] || 0;
+      }
 
       const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes : [];
       const reminderSlots = reminderTimes
@@ -116,7 +130,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       const missed = pendingSlots.filter((slot) => nowMinutes > slot + snoozeAfterMinutes).length;
       if (missed <= 0) return acc;
 
-      const ownerName = takerId === 'all'
+      const ownerName = isSharedMed
         ? 'Ortak'
         : (persons.find((p) => p.id === takerId)?.name || 'Bilinmeyen');
 
@@ -230,16 +244,19 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
     const now = new Date();
     const results = [];
 
+    const getDayTakenCount = (medId, dateKey, takerId) => {
+      return logs.filter((l) => (
+        l.medId === medId &&
+        l.personId === takerId &&
+        getLogicalDateKeyForLog(l, rolloverMinutes) === dateKey
+      )).length;
+    };
+
     for (const med of meds) {
       const plannedDose = parseInt(med.dailyDose, 10);
       if (!plannedDose || plannedDose <= 0) continue;
 
-      const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
-      if (activePerson && !activePerson.canSeeAll && takerId !== activePerson.id) continue;
-
-      const ownerName = takerId === 'all' ? 'Ortak' : (persons.find(p => p.id === takerId)?.name || 'Bilinmeyen');
-
-      const calcStats = (days) => {
+      const calcStats = (days, takerId) => {
         let totalPlanned = 0;
         let totalTaken = 0;
 
@@ -257,10 +274,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
           }
 
           totalPlanned += plannedDose;
-          const dayTaken = logs.filter(l =>
-            l.medId === med.id && l.personId === takerId &&
-            getLogicalDateKeyForLog(l, rolloverMinutes) === dateKey
-          ).length;
+          const dayTaken = getDayTakenCount(med.id, dateKey, takerId);
           totalTaken += Math.min(dayTaken, plannedDose);
         }
 
@@ -268,13 +282,49 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
         return { totalPlanned, totalTaken, rate };
       };
 
-      results.push({
-        id: med.id,
-        name: med.name,
-        ownerName,
-        week: calcStats(7),
-        month: calcStats(30),
-      });
+      const isSharedMed = med.personId === 'all';
+      if (!isSharedMed) {
+        const takerId = med.personId;
+        if (activePerson && !activePerson.canSeeAll && takerId !== activePerson.id) continue;
+
+        const ownerName = persons.find((p) => p.id === takerId)?.name || 'Bilinmeyen';
+        results.push({
+          id: `${med.id}-${takerId}`,
+          name: med.name,
+          ownerName,
+          week: calcStats(7, takerId),
+          month: calcStats(30, takerId),
+        });
+        continue;
+      }
+
+      let takerIds = [];
+      if (activePerson?.canSeeAll) {
+        takerIds = [...new Set(
+          logs
+            .filter((l) => l.medId === med.id && l.personId)
+            .map((l) => l.personId)
+        )];
+      } else if (activePerson?.id) {
+        takerIds = [activePerson.id];
+      }
+
+      for (const takerId of takerIds) {
+        const week = calcStats(7, takerId);
+        const month = calcStats(30, takerId);
+
+        // For shared meds, list only users who actually used the med.
+        if ((week.totalTaken + month.totalTaken) === 0) continue;
+
+        const ownerName = persons.find((p) => p.id === takerId)?.name || 'Bilinmeyen';
+        results.push({
+          id: `${med.id}-${takerId}`,
+          name: med.name,
+          ownerName,
+          week,
+          month,
+        });
+      }
     }
 
     return results.sort((a, b) => (a.week.rate ?? 100) - (b.week.rate ?? 100));
