@@ -6,7 +6,8 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
-import { scheduleReminderSnooze, cancelMedReminders } from '../utils/notifications';
+import * as Notifications from 'expo-notifications';
+import { scheduleReminderSnooze } from '../utils/notifications';
 import { 
   Check, AlertCircle, Pill, Clock, Search
 } from 'lucide-react-native';
@@ -260,8 +261,30 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       const consumeAmount = parseFloat(med.consumePerUsage || 1);
 
       const proceed = async () => {
-        // Cancel any scheduled notifications for this med
-        await cancelMedReminders(med);
+        // Dismiss currently shown notifications for this med
+        // Expo notifications expose data under request.content.data
+        try {
+          const presented = await Notifications.getPresentedNotificationsAsync();
+          const toRemove = presented.filter(
+            (n) => String(n?.request?.content?.data?.medId || '') === String(med.id)
+          );
+          if (toRemove.length > 0) {
+            for (const notif of toRemove) {
+              const notifId = notif?.request?.identifier || notif?.identifier;
+              if (notifId) {
+                await Notifications.dismissNotificationAsync(notifId);
+              }
+            }
+          } else {
+            // Fallback for edge cases where presented list is empty but last response exists.
+            const lastResponse = await Notifications.getLastNotificationResponseAsync();
+            const lastMedId = String(lastResponse?.notification?.request?.content?.data?.medId || '');
+            const lastNotifId = lastResponse?.notification?.request?.identifier;
+            if (lastNotifId && lastMedId === String(med.id)) {
+              await Notifications.dismissNotificationAsync(lastNotifId);
+            }
+          }
+        } catch (_) {}
 
         // Optimistic UI update for immediate feedback on dashboard
         setMeds((prev) => prev.map((item) => {

@@ -150,8 +150,11 @@ export const ACTIVE_PERSON_KEY = 'ACTIVE_PERSON_ID';
 export const DAY_ROLLOVER_KEY = 'DAY_ROLLOVER_TIME';
 export const SNOOZE_BEFORE_MINUTES_KEY = 'SNOOZE_BEFORE_MINUTES';
 export const SNOOZE_AFTER_MINUTES_KEY = 'SNOOZE_AFTER_MINUTES';
+const LEGACY_REORDER_CART_KEY = 'REORDER_CART_ITEMS';
 const DEFAULT_SNOOZE_BEFORE_MINUTES = 60;
 const DEFAULT_SNOOZE_AFTER_MINUTES = 120;
+
+const getReorderCartDocRef = (code) => doc(db, 'families', normalizeFamilyCode(code), 'meta', 'reorderCart');
 
 export const setActivePerson = async (personId) => {
   if (personId) await AsyncStorage.setItem(ACTIVE_PERSON_KEY, personId);
@@ -213,6 +216,52 @@ export const getSnoozeWindowSettings = async () => {
   const afterMinutes = clampSnoozeMinutes(afterRaw, DEFAULT_SNOOZE_AFTER_MINUTES);
 
   return { beforeMinutes, afterMinutes };
+};
+
+export const getReorderCartItems = async () => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) return [];
+
+    const cartRef = getReorderCartDocRef(code);
+    const snap = await getDoc(cartRef);
+
+    if (snap.exists()) {
+      const items = snap.data()?.items;
+      return Array.isArray(items) ? items : [];
+    }
+
+    // One-time migration from old local storage key.
+    const legacyRaw = await AsyncStorage.getItem(LEGACY_REORDER_CART_KEY);
+    const legacyItems = legacyRaw ? JSON.parse(legacyRaw) : [];
+    if (Array.isArray(legacyItems) && legacyItems.length > 0) {
+      await setDoc(cartRef, { items: legacyItems, updatedAt: Date.now() }, { merge: true });
+      return legacyItems;
+    }
+
+    return [];
+  } catch (e) {
+    console.error('getReorderCartItems failed:', e);
+    return [];
+  }
+};
+
+export const saveReorderCartItems = async (items) => {
+  try {
+    const code = await getFamilyCode();
+    if (!code) return;
+
+    const nextItems = Array.isArray(items) ? items : [];
+    const cartRef = getReorderCartDocRef(code);
+    await setDoc(cartRef, { items: nextItems, updatedAt: Date.now() }, { merge: true });
+  } catch (e) {
+    console.error('saveReorderCartItems failed:', e);
+    throw e;
+  }
+};
+
+export const clearReorderCartItems = async () => {
+  await saveReorderCartItems([]);
 };
 
 // --- GETTERS ---

@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function hasFamilyDoc(familyCode) {
+      return exists(/databases/$(database)/documents/families/$(familyCode));
+    }
+
+    function validFamilyDocShape(familyCode) {
+      let family = get(/databases/$(database)/documents/families/$(familyCode)).data;
+      return family.familyCode == familyCode
+        && family.familyPassword is string
+        && family.familyPassword.size() >= 4;
+    }
+
+    // NOTE:
+    // This app currently does not use Firebase Authentication.
+    // Without request.auth, Firestore rules cannot strongly identify users.
+    // These rules harden structure and prevent broad listing, but true per-user
+    // isolation requires adding Firebase Auth in the next phase.
+
+    match /families/{familyCode} {
+      // Block listing all families.
+      allow list: if false;
+
+      // Allow reading only the selected family document.
+      allow get: if true;
+
+      // Family root doc may be created once with required fields.
+      allow create: if request.resource.data.familyCode == familyCode
+        && request.resource.data.familyPassword is string
+        && request.resource.data.familyPassword.size() >= 4;
+
+      // Allow updates but keep immutable familyCode.
+      allow update: if request.resource.data.familyCode == resource.data.familyCode
+        && request.resource.data.familyPassword is string
+        && request.resource.data.familyPassword.size() >= 4;
+
+      // Never delete the family root doc from client.
+      allow delete: if false;
+
+      match /{subCollection}/{docId} {
+        // Only allow access when family root exists and has expected shape.
+        allow read, write: if hasFamilyDoc(familyCode) && validFamilyDocShape(familyCode);
+      }
+    }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
