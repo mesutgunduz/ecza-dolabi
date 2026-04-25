@@ -69,6 +69,7 @@ export default function PersonSelectScreen({ onPersonSelected }) {
       name: newName.trim(), 
       avatar: selectedAvatar, 
       canSeeAll: false, // Yeni eklenenler varsayılan olarak admin değil
+      receivesNotifications: true,
       pin: '' 
     });
     const updated = await getPersons();

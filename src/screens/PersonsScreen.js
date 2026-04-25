@@ -20,6 +20,7 @@ export default function PersonsScreen() {
   const [birthdate, setBirthdate] = useState('');
   const [avatar, setAvatar] = useState('👤');
   const [canSeeAll, setCanSeeAll] = useState(false);
+  const [receivesNotifications, setReceivesNotifications] = useState(true);
   const [pin, setPin] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
 
@@ -49,6 +50,7 @@ export default function PersonsScreen() {
       setBirthdate(person.birthdate || '');
       setAvatar(person.avatar || '👤');
       setCanSeeAll(person.canSeeAll === true);
+      setReceivesNotifications(person.receivesNotifications !== false);
       setPin(person.pin || '');
     } else {
       setEditingId(null);
@@ -58,6 +60,7 @@ export default function PersonsScreen() {
       setBirthdate('');
       setAvatar('👤');
       setCanSeeAll(false);
+      setReceivesNotifications(true);
       setPin('');
     }
     setModalVisible(true);
@@ -86,6 +89,7 @@ export default function PersonsScreen() {
       birthdate, 
       avatar, 
       canSeeAll,
+      receivesNotifications,
       pin: canSeeAll ? pin : '',
     };
     if (editingId) { await editPerson(editingId, payload); }
@@ -218,6 +222,18 @@ export default function PersonsScreen() {
                 </View>
                 <TouchableOpacity onPress={() => setCanSeeAll(!canSeeAll)} style={[styles.toggleSwitch, canSeeAll && styles.toggleSwitchOn]}>
                   <View style={[styles.toggleKnob, canSeeAll && styles.toggleKnobOn]} />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.permissionRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.permissionLabel}>🔔 Bildirim Alabilir</Text>
+                  <Text style={styles.permissionDesc}>Bu kişi için yerel ilaç hatırlatmaları aktif olsun.</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setReceivesNotifications(!receivesNotifications)}
+                  style={[styles.toggleSwitch, receivesNotifications && styles.toggleSwitchOn]}
+                >
+                  <View style={[styles.toggleKnob, receivesNotifications && styles.toggleKnobOn]} />
                 </TouchableOpacity>
               </View>
               {canSeeAll && (

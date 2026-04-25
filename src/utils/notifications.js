@@ -115,6 +115,50 @@ const shouldScheduleOnDate = (med, date) => {
   return selectedDays.includes(date.getDay());
 };
 
+export const canPersonReceiveReminder = (person) => {
+  if (!person) return false;
+  return person.receivesNotifications !== false;
+};
+
+export const isMedRelevantForPerson = (med, person) => {
+  if (!med || med.isActive === false || !person?.id) return false;
+  if (!canPersonReceiveReminder(person)) return false;
+  const owner = med.personId || 'all';
+  return owner === 'all' || owner === person.id;
+};
+
+export const cancelAllReminderNotifications = async () => {
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  for (const notif of scheduled) {
+    const source = String(notif?.content?.data?.source || '');
+    if (source === 'med-reminder' || source === 'med-snooze') {
+      await Notifications.cancelScheduledNotificationAsync(notif.identifier);
+    }
+  }
+};
+
+export const rebuildRemindersForPerson = async ({ meds, activePerson }) => {
+  await cancelAllReminderNotifications();
+
+  if (!Array.isArray(meds) || meds.length === 0) {
+    return { scheduledCount: 0 };
+  }
+
+  if (!canPersonReceiveReminder(activePerson)) {
+    return { scheduledCount: 0 };
+  }
+
+  let scheduledCount = 0;
+  for (const med of meds) {
+    if (!isMedRelevantForPerson(med, activePerson)) continue;
+    if (!Array.isArray(med.reminderTimes) || med.reminderTimes.length === 0) continue;
+    await scheduleMedReminders(med);
+    scheduledCount += 1;
+  }
+
+  return { scheduledCount };
+};
+
 export const scheduleMedReminders = async (med) => {
   if (!med?.id || !med?.name || !Array.isArray(med.reminderTimes) || med.isActive === false) return;
 

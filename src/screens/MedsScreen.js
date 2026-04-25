@@ -7,11 +7,11 @@ import { useFocusEffect } from '@react-navigation/native';
 import { CameraView } from 'expo-camera';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
-import { getMeds, getPersons, addMed, editMed, deleteMed, getBarcodeCatalogEntry, saveBarcodeCatalogEntry } from '../utils/storage';
+import { getMeds, getPersons, addMed, editMed, deleteMed, markAsTaken, getBarcodeCatalogEntry, saveBarcodeCatalogEntry } from '../utils/storage';
 import { parseITSBarcode } from '../utils/barcodeParser';
 import { searchBarcodeFromAPI } from '../utils/api';
 import { parseMedicineTextFromOCR } from '../utils/ocrParser';
-import { requestNotificationPermissions, scheduleMedReminders, cancelMedReminders } from '../utils/notifications';
+import { requestNotificationPermissions, rebuildRemindersForPerson } from '../utils/notifications';
 import { Plus, Trash2, Edit2, X, Check, Search, Bell, Scan, ScanSearch, Clock, AlertCircle } from 'lucide-react-native';
 
 const defaultBarcodeMeta = { gtin: '', serial: '', batch: '' };
@@ -25,7 +25,7 @@ const WEEK_DAY_OPTIONS = [
   { value: 0, label: 'Paz' },
 ];
 
-export default function MedsScreen() {
+export default function MedsScreen({ activePerson }) {
   const cameraRef = useRef(null);
 
   const [meds, setMeds] = useState([]);
@@ -189,17 +189,10 @@ export default function MedsScreen() {
       }
 
       const hasPerm = await requestNotificationPermissions();
-      if (hasPerm && medData.name) {
+      if (hasPerm) {
         const all = await getMeds();
-        const current = editingMed
-          ? all.find(m => m.id === editingMed.id)
-          : [...all].reverse().find(m => m.name === name);
-        if (current) {
-          if (current.isActive === false) {
-            await cancelMedReminders(current);
-          } else {
-            await scheduleMedReminders(current);
-          }
+        if (activePerson?.id) {
+          await rebuildRemindersForPerson({ meds: all, activePerson });
         }
       }
 
@@ -215,12 +208,15 @@ export default function MedsScreen() {
   const handleDelete = (id) => {
     const performDelete = async () => {
       try {
-        const medToDelete = meds.find(m => m.id === id);
-        if (medToDelete) {
-          await cancelMedReminders(medToDelete);
-        }
         const removed = await deleteMed(id);
         if (!removed) throw new Error('Delete failed');
+
+        const hasPerm = await requestNotificationPermissions();
+        if (hasPerm && activePerson?.id) {
+          const all = await getMeds();
+          await rebuildRemindersForPerson({ meds: all, activePerson });
+        }
+
         loadData();
       } catch (e) {
         console.error('Delete med failed:', e);
@@ -427,6 +423,58 @@ export default function MedsScreen() {
 
   const headerTopInset = Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0;
 
+  const handleUseFromCabinet = async (med) => {
+    const consumeAmount = parseFloat(med.consumePerUsage || 1);
+
+    const completeUse = async (takerId, takerName) => {
+      const success = await markAsTaken(med.id, takerId, consumeAmount, med.name, takerName);
+      if (!success) {
+        Alert.alert('Hata', 'Kullanım kaydı eklenemedi.');
+        return;
+      }
+      await loadData();
+    };
+
+    if (med.personId === 'all') {
+      const personOptions = persons.filter((p) => p.id !== 'all');
+      if (personOptions.length === 0) {
+        Alert.alert('Hata', 'Kişi bulunamadı.');
+        return;
+      }
+
+      if (Platform.OS === 'web') {
+        const personName = window.prompt(
+          `${med.name} kim tarafından kullanılıyor?\n\nKullanılabilir: ${personOptions.map((p) => p.name).join(', ')}`
+        );
+        if (!personName) return;
+        const selectedPerson = personOptions.find((p) => p.name === personName);
+        if (!selectedPerson) {
+          Alert.alert('Hata', 'Geçersiz kişi ismi.');
+          return;
+        }
+        await completeUse(selectedPerson.id, selectedPerson.name);
+        return;
+      }
+
+      Alert.alert(
+        `${med.name} - Kim kullandı?`,
+        'Lütfen kişi seçin:',
+        [
+          ...personOptions.map((person) => ({
+            text: person.name,
+            onPress: () => completeUse(person.id, person.name),
+          })),
+          { text: 'İptal', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+
+    const takerId = med.personId || activePerson?.id;
+    const takerName = persons.find((p) => p.id === takerId)?.name || activePerson?.name || 'Bilinmeyen';
+    await completeUse(takerId, takerName);
+  };
+
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: 12 + headerTopInset }]}>
@@ -524,6 +572,9 @@ export default function MedsScreen() {
               ) : null}
             </View>
             <View style={styles.actions}>
+              <TouchableOpacity onPress={() => handleUseFromCabinet(item)} style={styles.actionBtnUse}>
+                <Check color="#059669" size={18} />
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => openForm(item)} style={styles.actionBtn}><Edit2 color="#3B82F6" size={18} /></TouchableOpacity>
               <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.actionBtn}><Trash2 color="#EF4444" size={18} /></TouchableOpacity>
             </View>
@@ -774,6 +825,7 @@ const styles = StyleSheet.create({
   dateText: { fontSize: 11, color: '#9CA3AF', marginTop: 3 },
   expiredText: { color: '#EF4444', fontWeight: 'bold' },
   actions: { flexDirection: 'row' },
+  actionBtnUse: { padding: 8, marginLeft: 6, backgroundColor: '#ECFDF5', borderRadius: 8 },
   actionBtn: { padding: 8, marginLeft: 6 },
   emptyBoxCompact: { paddingTop: 24, alignItems: 'center' },
   empty: { textAlign: 'center', color: '#9CA3AF', fontStyle: 'italic' },

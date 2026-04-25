@@ -18,7 +18,7 @@ import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, getMeds, cle
 import {
   requestNotificationPermissions,
   configureNotificationCategories,
-  scheduleMedReminders,
+  rebuildRemindersForPerson,
   scheduleReminderSnooze,
   SNOOZE_10_ACTION_ID,
   SNOOZE_30_ACTION_ID,
@@ -89,26 +89,28 @@ export default function App() {
   useEffect(() => {
     const checkAuth = async () => {
       const code = await getFamilyCode();
+      let selectedPerson = null;
       if (code) {
         setIsAuthenticated(true);
         const savedPersonId = await getActivePerson();
         if (savedPersonId) {
           const persons = await getPersons();
           const found = persons.find(p => p.id === savedPersonId);
-          if (found) setActivePerson(found);
+          if (found) {
+            selectedPerson = found;
+            setActivePerson(found);
+          }
         }
       }
 
       await configureNotificationCategories();
       const hasPerm = await requestNotificationPermissions();
 
-      // Rebuild active reminders so old schedules also include action buttons/category.
+      // Build reminders only for the selected profile on this device.
       if (hasPerm) {
         const meds = await getMeds();
-        for (const med of meds) {
-          if (med?.isActive === false) continue;
-          if (!Array.isArray(med?.reminderTimes) || med.reminderTimes.length === 0) continue;
-          await scheduleMedReminders(med);
+        if (selectedPerson?.id) {
+          await rebuildRemindersForPerson({ meds, activePerson: selectedPerson });
         }
       }
 
@@ -121,6 +123,20 @@ export default function App() {
 
     checkAuth();
   }, []);
+
+  useEffect(() => {
+    const syncRemindersForActivePerson = async () => {
+      if (!isAuthenticated || !activePerson?.id) return;
+
+      const hasPerm = await requestNotificationPermissions();
+      if (!hasPerm) return;
+
+      const meds = await getMeds();
+      await rebuildRemindersForPerson({ meds, activePerson });
+    };
+
+    syncRemindersForActivePerson();
+  }, [isAuthenticated, activePerson?.id, activePerson?.receivesNotifications]);
 
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => {

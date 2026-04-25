@@ -360,7 +360,10 @@ export const addPerson = async (person) => {
   try {
     const code = await getFamilyCode();
     if (!code) return;
-    await addDoc(collection(db, "families", code, "persons"), person);
+    await addDoc(collection(db, "families", code, "persons"), {
+      receivesNotifications: true,
+      ...person,
+    });
   } catch (e) {
     console.error('addPerson failed:', e);
     throw e;

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  Alert, ActivityIndicator, Linking, ScrollView, Modal, TextInput, AppState
+  Alert, ActivityIndicator, Linking, ScrollView, Modal, TextInput, AppState, PanResponder
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getLogs, getMeds, getPersons, deleteLog, editLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
@@ -19,6 +19,23 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingLog, setEditingLog] = useState(null);
   const [editTimeInput, setEditTimeInput] = useState('');
+
+  const swipeResponder = useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => (
+        Math.abs(gestureState.dx) > 20 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy)
+      ),
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dx < -50 && activeTab === 'history') {
+          setActiveTab('stats');
+        }
+        if (gestureState.dx > 50 && activeTab === 'stats') {
+          setActiveTab('history');
+        }
+      },
+    }),
+    [activeTab]
+  );
 
   const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
   const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
@@ -330,10 +347,35 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
     return results.sort((a, b) => (a.week.rate ?? 100) - (b.week.rate ?? 100));
   }, [meds, logs, persons, activePerson, rolloverMinutes]);
 
+  const groupedStatsData = useMemo(() => {
+    const order = persons.map((p) => p.name || '').filter(Boolean);
+    const groupedMap = new Map();
+
+    for (const item of statsData) {
+      const key = item.ownerName || 'Bilinmeyen';
+      if (!groupedMap.has(key)) groupedMap.set(key, []);
+      groupedMap.get(key).push(item);
+    }
+
+    const groups = [...groupedMap.entries()].map(([ownerName, items]) => ({
+      ownerName,
+      items: items.sort((a, b) => (a.week.rate ?? 100) - (b.week.rate ?? 100)),
+    }));
+
+    return groups.sort((a, b) => {
+      const ia = order.indexOf(a.ownerName);
+      const ib = order.indexOf(b.ownerName);
+      if (ia === -1 && ib === -1) return a.ownerName.localeCompare(b.ownerName, 'tr');
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
+  }, [statsData, persons]);
+
   if (loading) return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} {...swipeResponder.panHandlers}>
       <View style={styles.tabBar}>
         <TouchableOpacity
           style={[styles.tabBtn, activeTab === 'history' && styles.tabBtnActive]}
@@ -353,9 +395,12 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
 
       {activeTab === 'stats' ? (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
-          {statsData.length === 0 ? (
+          {groupedStatsData.length === 0 ? (
             <Text style={styles.empty}>İstatistik için yeterli veri yok.</Text>
-          ) : statsData.map(item => {
+          ) : groupedStatsData.map((group) => (
+            <View key={group.ownerName} style={styles.personStatsGroup}>
+              <Text style={styles.personStatsTitle}>{group.ownerName}</Text>
+              {group.items.map(item => {
             const getRateColor = (r) => r == null ? '#9CA3AF' : r >= 80 ? '#059669' : r >= 50 ? '#D97706' : '#EF4444';
             const getRateLabel = (r) => r == null ? 'Veri yok' : r >= 80 ? 'İyi' : r >= 50 ? 'Orta' : 'Düşük';
             return (
@@ -392,6 +437,8 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
               </View>
             );
           })}
+            </View>
+          ))}
         </ScrollView>
       ) : (
         <>
@@ -514,6 +561,8 @@ const styles = StyleSheet.create({
   tabBtnActive: { borderBottomWidth: 2, borderBottomColor: '#059669' },
   tabBtnText: { fontSize: 14, fontWeight: '600', color: '#6B7280' },
   tabBtnTextActive: { color: '#059669' },
+  personStatsGroup: { marginBottom: 12 },
+  personStatsTitle: { fontSize: 14, fontWeight: '700', color: '#374151', marginBottom: 8, marginLeft: 2 },
   statCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, elevation: 2 },
   statHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   statMedName: { fontSize: 14, fontWeight: 'bold', color: '#111827', flex: 1 },
