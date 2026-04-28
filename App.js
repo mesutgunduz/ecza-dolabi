@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, ActivityIndicator, PanResponder } from 'react-native';
+import { NavigationContainer, useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Home, Users, Pill, Clock, UserCircle, ShoppingCart } from 'lucide-react-native';
 import * as Notifications from 'expo-notifications';
@@ -14,7 +14,7 @@ import LoginScreen from './src/screens/LoginScreen';
 import PersonSelectScreen from './src/screens/PersonSelectScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ReorderScreen from './src/screens/ReorderScreen';
-import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, getMeds, clearActivePerson, clearAllData, markAsTaken, createFamily, loginToFamily } from './src/utils/storage.js';
+import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, getMeds, clearActivePerson, clearAllData, markAsTaken, createFamily, loginToFamily, getNotificationTargetPersonIds } from './src/utils/storage.js';
 import {
   requestNotificationPermissions,
   configureNotificationCategories,
@@ -28,7 +28,46 @@ import {
 
 const Tab = createBottomTabNavigator();
 
-function MainTabs({ activePerson, onPersonChange, onFullLogout, dataRefreshKey }) {
+function SwipeableTabScreen({ routeNames, screenName, children }) {
+  const navigation = useNavigation();
+
+  const swipeResponder = useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => (
+        Math.abs(gestureState.dx) > 28 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy)
+      ),
+      onMoveShouldSetPanResponderCapture: (_, gestureState) => (
+        Math.abs(gestureState.dx) > 28 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy)
+      ),
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderRelease: (_, gestureState) => {
+        if (Math.abs(gestureState.dx) < 70) return;
+
+        const currentIndex = routeNames.indexOf(screenName);
+        if (currentIndex === -1) return;
+
+        if (gestureState.dx < 0 && currentIndex < routeNames.length - 1) {
+          navigation.navigate(routeNames[currentIndex + 1]);
+        }
+
+        if (gestureState.dx > 0 && currentIndex > 0) {
+          navigation.navigate(routeNames[currentIndex - 1]);
+        }
+      },
+    }),
+    [navigation, routeNames, screenName]
+  );
+
+  return <View style={{ flex: 1 }} {...swipeResponder.panHandlers}>{children}</View>;
+}
+
+function MainTabs({ activePerson, onPersonChange, onFullLogout, dataRefreshKey, onNotificationTargetsChange }) {
+  const routeNames = useMemo(() => (
+    activePerson.canSeeAll
+      ? ['Ana Ekran', 'Kişiler', 'İlaçlar', 'Alınacaklar', 'Geçmiş', 'Profilim']
+      : ['Ana Ekran', 'Geçmiş', 'Profilim']
+  ), [activePerson.canSeeAll]);
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -48,32 +87,56 @@ function MainTabs({ activePerson, onPersonChange, onFullLogout, dataRefreshKey }
       })}
     >
       <Tab.Screen name="Ana Ekran">
-        {() => <DashboardScreen activePerson={activePerson} dataRefreshKey={dataRefreshKey} />}
+        {() => (
+          <SwipeableTabScreen routeNames={routeNames} screenName="Ana Ekran">
+            <DashboardScreen activePerson={activePerson} dataRefreshKey={dataRefreshKey} />
+          </SwipeableTabScreen>
+        )}
       </Tab.Screen>
 
       {activePerson.canSeeAll && (
         <>
-          <Tab.Screen name="Kişiler" component={PersonsScreen} />
+          <Tab.Screen name="Kişiler">
+            {() => (
+              <SwipeableTabScreen routeNames={routeNames} screenName="Kişiler">
+                <PersonsScreen activePerson={activePerson} onNotificationTargetsChange={onNotificationTargetsChange} />
+              </SwipeableTabScreen>
+            )}
+          </Tab.Screen>
           <Tab.Screen name="İlaçlar" options={{ headerShown: false }}>
-            {() => <MedsScreen activePerson={activePerson} />}
+            {() => (
+              <SwipeableTabScreen routeNames={routeNames} screenName="İlaçlar">
+                <MedsScreen activePerson={activePerson} />
+              </SwipeableTabScreen>
+            )}
           </Tab.Screen>
           <Tab.Screen name="Alınacaklar">
-            {() => <ReorderScreen />}
+            {() => (
+              <SwipeableTabScreen routeNames={routeNames} screenName="Alınacaklar">
+                <ReorderScreen />
+              </SwipeableTabScreen>
+            )}
           </Tab.Screen>
         </>
       )}
 
       <Tab.Screen name="Geçmiş">
-        {() => <LogsScreen activePerson={activePerson} dataRefreshKey={dataRefreshKey} />}
+        {() => (
+          <SwipeableTabScreen routeNames={routeNames} screenName="Geçmiş">
+            <LogsScreen activePerson={activePerson} dataRefreshKey={dataRefreshKey} />
+          </SwipeableTabScreen>
+        )}
       </Tab.Screen>
 
       <Tab.Screen name="Profilim" options={{ tabBarLabel: activePerson?.name || 'Profilim' }}>
         {() => (
-          <ProfileScreen
-            activePerson={activePerson}
-            onPersonChange={onPersonChange}
-            onFullLogout={onFullLogout}
-          />
+          <SwipeableTabScreen routeNames={routeNames} screenName="Profilim">
+            <ProfileScreen
+              activePerson={activePerson}
+              onPersonChange={onPersonChange}
+              onFullLogout={onFullLogout}
+            />
+          </SwipeableTabScreen>
         )}
       </Tab.Screen>
     </Tab.Navigator>
@@ -85,6 +148,7 @@ export default function App() {
   const [activePerson, setActivePerson] = useState(null);
   const [loading, setLoading] = useState(true);
   const [dataRefreshKey, setDataRefreshKey] = useState(0);
+  const [notificationTargetsRefreshKey, setNotificationTargetsRefreshKey] = useState(0);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -110,7 +174,14 @@ export default function App() {
       if (hasPerm) {
         const meds = await getMeds();
         if (selectedPerson?.id) {
-          await rebuildRemindersForPerson({ meds, activePerson: selectedPerson });
+          const persons = await getPersons();
+          const selectedPersonIds = await getNotificationTargetPersonIds(selectedPerson.id);
+          await rebuildRemindersForPerson({
+            meds,
+            activePerson: selectedPerson,
+            persons,
+            selectedPersonIds,
+          });
         }
       }
 
@@ -131,12 +202,21 @@ export default function App() {
       const hasPerm = await requestNotificationPermissions();
       if (!hasPerm) return;
 
-      const meds = await getMeds();
-      await rebuildRemindersForPerson({ meds, activePerson });
+      const [meds, persons, selectedPersonIds] = await Promise.all([
+        getMeds(),
+        getPersons(),
+        getNotificationTargetPersonIds(activePerson.id),
+      ]);
+      await rebuildRemindersForPerson({
+        meds,
+        activePerson,
+        persons,
+        selectedPersonIds,
+      });
     };
 
     syncRemindersForActivePerson();
-  }, [isAuthenticated, activePerson?.id, activePerson?.receivesNotifications]);
+  }, [isAuthenticated, activePerson?.id, activePerson?.receivesNotifications, notificationTargetsRefreshKey]);
 
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => {
@@ -145,6 +225,7 @@ export default function App() {
       const notificationId = response?.notification?.request?.identifier;
 
       const resolveTakerId = async () => {
+        if (data.targetPersonId && data.targetPersonId !== 'all') return data.targetPersonId;
         if (data.personId && data.personId !== 'all') return data.personId;
         if (activePerson?.id) return activePerson.id;
 
@@ -162,6 +243,8 @@ export default function App() {
           medId: data.medId,
           medName: data.medName,
           minutes: snoozeMinutes,
+          targetPersonId: data.targetPersonId,
+          targetPersonName: data.targetPersonName,
         });
 
         if (notificationId) {
@@ -216,6 +299,10 @@ export default function App() {
     setActivePerson(person);
   };
 
+  const handleNotificationTargetsChange = () => {
+    setNotificationTargetsRefreshKey((key) => key + 1);
+  };
+
   const handlePersonChange = async () => {
     await clearActivePerson();
     setActivePerson(null);
@@ -247,6 +334,7 @@ export default function App() {
           onPersonChange={handlePersonChange}
           onFullLogout={handleFullLogout}
           dataRefreshKey={dataRefreshKey}
+          onNotificationTargetsChange={handleNotificationTargetsChange}
         />
       )}
     </NavigationContainer>

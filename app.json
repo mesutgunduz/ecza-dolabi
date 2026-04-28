@@ -38,7 +38,13 @@
       }
     },
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Karekod okutmak ve kutudan okumak için kamera erişimi gerekiyor."
+        }
+      ]
     ]
   }
 }

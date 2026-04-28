@@ -127,6 +127,28 @@ export const isMedRelevantForPerson = (med, person) => {
   return owner === 'all' || owner === person.id;
 };
 
+const getTargetPersons = ({ persons, selectedPersonIds, fallbackPerson }) => {
+  const allPersons = Array.isArray(persons) ? [...persons] : [];
+
+  if (fallbackPerson?.id && !allPersons.some((person) => person.id === fallbackPerson.id)) {
+    allPersons.push(fallbackPerson);
+  }
+
+  const normalizedIds = [...new Set(
+    (Array.isArray(selectedPersonIds) ? selectedPersonIds : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  )];
+
+  if (normalizedIds.length === 0 && fallbackPerson?.id) {
+    normalizedIds.push(String(fallbackPerson.id));
+  }
+
+  return normalizedIds
+    .map((personId) => allPersons.find((person) => String(person?.id) === personId))
+    .filter((person) => canPersonReceiveReminder(person));
+};
+
 export const cancelAllReminderNotifications = async () => {
   const scheduled = await Notifications.getAllScheduledNotificationsAsync();
   for (const notif of scheduled) {
@@ -137,33 +159,49 @@ export const cancelAllReminderNotifications = async () => {
   }
 };
 
-export const rebuildRemindersForPerson = async ({ meds, activePerson }) => {
+export const rebuildRemindersForPerson = async ({ meds, activePerson, persons = [], selectedPersonIds = [] }) => {
   await cancelAllReminderNotifications();
 
   if (!Array.isArray(meds) || meds.length === 0) {
     return { scheduledCount: 0 };
   }
 
-  if (!canPersonReceiveReminder(activePerson)) {
+  const targets = getTargetPersons({
+    persons,
+    selectedPersonIds,
+    fallbackPerson: activePerson,
+  });
+
+  if (targets.length === 0) {
     return { scheduledCount: 0 };
   }
 
   let scheduledCount = 0;
-  for (const med of meds) {
-    if (!isMedRelevantForPerson(med, activePerson)) continue;
-    if (!Array.isArray(med.reminderTimes) || med.reminderTimes.length === 0) continue;
-    await scheduleMedReminders(med);
-    scheduledCount += 1;
+  for (const person of targets) {
+    for (const med of meds) {
+      if (!isMedRelevantForPerson(med, person)) continue;
+      if (!Array.isArray(med.reminderTimes) || med.reminderTimes.length === 0) continue;
+      await scheduleMedReminders(med, person);
+      scheduledCount += 1;
+    }
   }
 
   return { scheduledCount };
 };
 
-export const scheduleMedReminders = async (med) => {
+export const scheduleMedReminders = async (med, targetPerson = null) => {
   if (!med?.id || !med?.name || !Array.isArray(med.reminderTimes) || med.isActive === false) return;
 
   // Önce bu ilaca ait eski bildirimleri iptal et
-  await cancelMedReminders(med);
+  if (!targetPerson) {
+    await cancelMedReminders(med);
+  }
+
+  const personName = String(targetPerson?.name || '').trim();
+  const notificationTitle = personName ? `${personName} için ilaç zamanı` : 'İlaç Zamanı';
+  const notificationBody = personName
+    ? `${med.name} kullanma zamanı geldi.`
+    : `${med.name} alma zamanı geldi.`;
 
   for (const timeStr of med.reminderTimes) {
     const parsedTime = parseReminderTime(timeStr);
@@ -178,8 +216,8 @@ export const scheduleMedReminders = async (med) => {
 
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: 'Ilac Zamani',
-          body: `${med.name} alma zamani geldi.`,
+          title: notificationTitle,
+          body: notificationBody,
           data: { 
             medId: med.id, 
             medName: med.name, 
@@ -187,6 +225,8 @@ export const scheduleMedReminders = async (med) => {
             minute, 
             source: 'med-reminder',
             personId: med.personId || 'all',
+            targetPersonId: targetPerson?.id || med.personId || 'all',
+            targetPersonName: personName,
             consumeAmt: Number(med.consumePerUsage || 1),
           },
           categoryIdentifier: MED_REMINDER_CATEGORY_ID,
@@ -203,7 +243,7 @@ export const scheduleMedReminders = async (med) => {
   }
 };
 
-export const scheduleReminderSnooze = async ({ medId, medName, minutes }) => {
+export const scheduleReminderSnooze = async ({ medId, medName, minutes, targetPersonId = null, targetPersonName = '' }) => {
   if (!medId || !minutes || minutes <= 0) {
     throw new Error('INVALID_SNOOZE_INPUT');
   }
@@ -214,12 +254,20 @@ export const scheduleReminderSnooze = async ({ medId, medName, minutes }) => {
   }
 
   const triggerDate = new Date(Date.now() + minutes * 60 * 1000);
+  const personName = String(targetPersonName || '').trim();
 
   const identifier = await Notifications.scheduleNotificationAsync({
     content: {
-      title: 'Ilac Zamani',
-      body: `${medName || 'Ilac'} icin ertelenen hatirlatma.`,
-      data: { medId, medName, source: 'med-snooze', snoozeMinutes: minutes },
+      title: personName ? `${personName} için ilaç zamanı` : 'İlaç Zamanı',
+      body: `${medName || 'İlaç'} için ertelenen hatırlatma.`,
+      data: {
+        medId,
+        medName,
+        source: 'med-snooze',
+        snoozeMinutes: minutes,
+        targetPersonId: targetPersonId || 'all',
+        targetPersonName: personName,
+      },
       categoryIdentifier: MED_REMINDER_CATEGORY_ID,
       sound: 'default',
       priority: Notifications.AndroidNotificationPriority.MAX,

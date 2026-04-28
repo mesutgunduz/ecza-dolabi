@@ -1,16 +1,17 @@
 import React, { useState, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, Modal, ScrollView, Alert, Platform, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getPersons, addPerson, deletePerson, editPerson, getMeds } from '../utils/storage';
-import { Trash2, UserPlus, Edit2, X, Check, Plus } from 'lucide-react-native';
+import { getPersons, addPerson, deletePerson, editPerson, getMeds, getNotificationTargetPersonIds, setNotificationTargetPersonIds } from '../utils/storage';
+import { Trash2, Edit2, X, Check, Plus, Bell } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
 const AVATARS = ['🧑', '👨', '👩', '👱‍♂️', '👱‍♀️', '🧔', '👦', '👧', '👴', '👵', '👶', '👤'];
 const RELATIONS = ['Ben', 'Eşim', 'Oğlum', 'Kızım', 'Diğer'];
 const GENDERS = ['Erkek', 'Kadın'];
 
-export default function PersonsScreen() {
+export default function PersonsScreen({ activePerson, onNotificationTargetsChange }) {
   const [persons, setPersons] = useState([]);
+  const [notificationTargets, setNotificationTargets] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
@@ -36,10 +37,27 @@ export default function PersonsScreen() {
 
   const loadPersons = async () => {
     const data = await getPersons();
+    const storedTargets = await getNotificationTargetPersonIds(activePerson?.id);
+    const validTargetIds = storedTargets.filter((personId) => data.some((person) => person.id === personId));
+
+    setNotificationTargets(validTargetIds);
+    if (validTargetIds.length !== storedTargets.length) {
+      await setNotificationTargetPersonIds(validTargetIds);
+    }
     setPersons(data);
   };
 
-  useFocusEffect(useCallback(() => { loadPersons(); }, []));
+  useFocusEffect(useCallback(() => { loadPersons(); }, [activePerson?.id]));
+
+  const handleNotificationTargetToggle = async (personId) => {
+    const nextTargets = notificationTargets.includes(personId)
+      ? notificationTargets.filter((id) => id !== personId)
+      : [...notificationTargets, personId];
+
+    setNotificationTargets(nextTargets);
+    const savedTargets = await setNotificationTargetPersonIds(nextTargets);
+    await onNotificationTargetsChange?.(savedTargets);
+  };
 
   const openForm = (person = null) => {
     if (person) {
@@ -94,6 +112,14 @@ export default function PersonsScreen() {
     };
     if (editingId) { await editPerson(editingId, payload); }
     else { await addPerson(payload); }
+
+    if (editingId && receivesNotifications === false && notificationTargets.includes(editingId)) {
+      const nextTargets = notificationTargets.filter((id) => id !== editingId);
+      setNotificationTargets(nextTargets);
+      const savedTargets = await setNotificationTargetPersonIds(nextTargets);
+      await onNotificationTargetsChange?.(savedTargets);
+    }
+
     setModalVisible(false);
     loadPersons();
   };
@@ -111,6 +137,12 @@ export default function PersonsScreen() {
 
     const pDelete = async () => {
       await deletePerson(id);
+      if (notificationTargets.includes(id)) {
+        const nextTargets = notificationTargets.filter((personId) => personId !== id);
+        setNotificationTargets(nextTargets);
+        const savedTargets = await setNotificationTargetPersonIds(nextTargets);
+        await onNotificationTargetsChange?.(savedTargets);
+      }
       loadPersons();
     };
 
@@ -153,8 +185,26 @@ export default function PersonsScreen() {
                   {age !== null && <Text style={styles.tagText}>• {age} Yaşında</Text>}
                   {item.gender && <Text style={[styles.tagText, { color: isFemale ? '#EC4899' : '#3B82F6' }]}>• {item.gender}</Text>}
                 </View>
+                <Text style={styles.deviceNotifText}>
+                  {item.receivesNotifications === false
+                    ? 'Bildirim kapalı'
+                    : notificationTargets.includes(item.id)
+                      ? 'Bu cihazda bildirimi açık'
+                      : 'Bu cihazda bildirimi kapalı'}
+                </Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TouchableOpacity
+                  style={[
+                    styles.notifyTargetBtn,
+                    item.receivesNotifications !== false && notificationTargets.includes(item.id) && styles.notifyTargetBtnActive,
+                    item.receivesNotifications === false && styles.notifyTargetBtnDisabled,
+                  ]}
+                  disabled={item.receivesNotifications === false}
+                  onPress={() => handleNotificationTargetToggle(item.id)}
+                >
+                  <Bell color={item.receivesNotifications === false ? '#9CA3AF' : notificationTargets.includes(item.id) ? '#fff' : '#059669'} size={16} />
+                </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.seeAllBtn, item.canSeeAll && styles.seeAllBtnActive]}
                   onPress={async () => { await editPerson(item.id, { ...item, canSeeAll: !item.canSeeAll }); loadPersons(); }}
@@ -317,6 +367,10 @@ const styles = StyleSheet.create({
   seeAllBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F3F4F6', justifyContent: 'center', alignItems: 'center', marginRight: 4 },
   seeAllBtnActive: { backgroundColor: '#FEF3C7' },
   seeAllBtnText: { fontSize: 18 },
+  notifyTargetBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#ECFDF5', justifyContent: 'center', alignItems: 'center', marginRight: 4, borderWidth: 1, borderColor: '#A7F3D0' },
+  notifyTargetBtnActive: { backgroundColor: '#059669', borderColor: '#059669' },
+  notifyTargetBtnDisabled: { backgroundColor: '#F3F4F6', borderColor: '#E5E7EB' },
+  deviceNotifText: { marginTop: 6, fontSize: 12, color: '#059669', fontWeight: '600' },
   permissionRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F9FAFB', borderRadius: 10, padding: 12, marginBottom: 20, borderWidth: 1, borderColor: '#E5E7EB' },
   permissionLabel: { fontSize: 14, fontWeight: 'bold', color: '#374151' },
   permissionDesc: { fontSize: 12, color: '#6B7280', marginTop: 2 },

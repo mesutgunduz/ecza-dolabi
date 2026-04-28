@@ -4,7 +4,7 @@ import {
   Alert, ActivityIndicator, Linking, ScrollView, Modal, TextInput, AppState, PanResponder
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getLogs, getMeds, getPersons, deleteLog, editLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings } from '../utils/storage';
+import { getLogs, getMeds, getPersons, deleteLog, editLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText, Edit2 } from 'lucide-react-native';
 
@@ -15,7 +15,9 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
   const [loading, setLoading] = useState(true);
   const [rolloverTime, setRolloverTime] = useState('00:00');
   const [activeTab, setActiveTab] = useState('history'); // 'history' | 'stats'
+  const [statsPersonFilter, setStatsPersonFilter] = useState('all');
   const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
+  const [notificationTargetIds, setNotificationTargetIds] = useState([]);
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingLog, setEditingLog] = useState(null);
   const [editTimeInput, setEditTimeInput] = useState('');
@@ -40,7 +42,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
   const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
   const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const l = await getLogs();
@@ -48,6 +50,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       const m = await getMeds();
       const rt = await getDayRolloverTime();
       const snoozeCfg = await getSnoozeWindowSettings();
+      const targetIds = await getNotificationTargetPersonIds(activePerson?.id);
 
       let filtered = l;
       if (activePerson && !activePerson.canSeeAll) {
@@ -59,18 +62,15 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       setMeds(m.filter(x => x.isActive !== false));
       setRolloverTime(rt);
       setSnoozeAfterMinutes(snoozeCfg.afterMinutes);
+      setNotificationTargetIds(targetIds);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [activePerson]);
 
-  useFocusEffect(useCallback(() => { loadData(); }, [activePerson]));
-
-  useEffect(() => {
-    loadData();
-  }, [dataRefreshKey]);
+  useFocusEffect(useCallback(() => { loadData(); }, [loadData, dataRefreshKey]));
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -82,7 +82,16 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
     return () => {
       subscription.remove();
     };
-  }, [activePerson, dataRefreshKey]);
+  }, [loadData]);
+
+  useEffect(() => {
+    if (!activePerson) return;
+    if (activePerson.canSeeAll) {
+      setStatsPersonFilter('all');
+    } else {
+      setStatsPersonFilter(activePerson.id);
+    }
+  }, [activePerson]);
 
   const missedDoseItems = useMemo(() => {
     const now = new Date();
@@ -96,6 +105,11 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
 
     const todayLogs = logs.filter(l => getLogicalDateKeyForLog(l, rolloverMinutes) === logicalTodayKey);
     const counts = {};
+    const personById = new Map(persons.map((p) => [p.id, p]));
+    const eligiblePersonIds = activePerson?.canSeeAll
+      ? [...new Set(notificationTargetIds)].filter((id) => personById.get(id)?.receivesNotifications !== false)
+      : (personById.get(activePerson?.id)?.receivesNotifications === false ? [] : [activePerson?.id].filter(Boolean));
+
     todayLogs.forEach(log => {
       const key = `${log.medId}-${log.personId}`;
       counts[key] = (counts[key] || 0) + 1;
@@ -113,24 +127,13 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       }
 
       const isSharedMed = med.personId === 'all';
-      const takerId = isSharedMed ? 'all' : med.personId;
+      const candidateIds = isSharedMed
+        ? eligiblePersonIds
+        : [med.personId].filter(Boolean);
+      const targetIds = candidateIds.filter((id) => eligiblePersonIds.includes(id));
+      if (targetIds.length === 0) return acc;
 
-      if (!isSharedMed && activePerson && !activePerson.canSeeAll && takerId !== activePerson.id) return acc;
-
-      let takenCount = 0;
-      if (isSharedMed) {
-        if (activePerson?.canSeeAll) {
-          takenCount = Object.entries(counts)
-            .filter(([key]) => key.startsWith(`${med.id}-`))
-            .reduce((sum, [, value]) => sum + value, 0);
-        } else {
-          const ownKey = `${med.id}-${activePerson.id}`;
-          takenCount = counts[ownKey] || 0;
-        }
-      } else {
-        const countKey = `${med.id}-${takerId}`;
-        takenCount = counts[countKey] || 0;
-      }
+      const takenCount = targetIds.reduce((sum, id) => sum + (counts[`${med.id}-${id}`] || 0), 0);
 
       const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes : [];
       const reminderSlots = reminderTimes
@@ -147,15 +150,15 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       const missed = pendingSlots.filter((slot) => nowMinutes > slot + snoozeAfterMinutes).length;
       if (missed <= 0) return acc;
 
-      const ownerName = isSharedMed
-        ? 'Ortak'
-        : (persons.find((p) => p.id === takerId)?.name || 'Bilinmeyen');
+      const ownerName = targetIds.length === 1
+        ? (persons.find((p) => p.id === targetIds[0])?.name || 'Bilinmeyen')
+        : 'Ortak';
 
       acc.push({
         id: med.id,
         medName: med.name,
         ownerName,
-        takerId,
+        takerId: targetIds.length === 1 ? targetIds[0] : (activePerson?.id || targetIds[0]),
         consumePerUsage: parseFloat(med.consumePerUsage || 1),
         missed,
         takenCount,
@@ -164,7 +167,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
 
       return acc;
     }, []);
-  }, [logs, meds, persons, activePerson, rolloverMinutes, logicalTodayKey, snoozeAfterMinutes]);
+  }, [logs, meds, persons, activePerson, rolloverMinutes, logicalTodayKey, snoozeAfterMinutes, notificationTargetIds]);
 
   const getPersonDisplayName = (log) => {
     if (log.takerName) return log.takerName;
@@ -302,6 +305,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       const isSharedMed = med.personId === 'all';
       if (!isSharedMed) {
         const takerId = med.personId;
+        if (statsPersonFilter !== 'all' && takerId !== statsPersonFilter) continue;
         if (activePerson && !activePerson.canSeeAll && takerId !== activePerson.id) continue;
 
         const ownerName = persons.find((p) => p.id === takerId)?.name || 'Bilinmeyen';
@@ -316,7 +320,9 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       }
 
       let takerIds = [];
-      if (activePerson?.canSeeAll) {
+      if (statsPersonFilter !== 'all') {
+        takerIds = [statsPersonFilter];
+      } else if (activePerson?.canSeeAll) {
         takerIds = [...new Set(
           logs
             .filter((l) => l.medId === med.id && l.personId)
@@ -345,7 +351,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
     }
 
     return results.sort((a, b) => (a.week.rate ?? 100) - (b.week.rate ?? 100));
-  }, [meds, logs, persons, activePerson, rolloverMinutes]);
+  }, [meds, logs, persons, activePerson, rolloverMinutes, statsPersonFilter]);
 
   const groupedStatsData = useMemo(() => {
     const order = persons.map((p) => p.name || '').filter(Boolean);
@@ -357,10 +363,26 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       groupedMap.get(key).push(item);
     }
 
-    const groups = [...groupedMap.entries()].map(([ownerName, items]) => ({
-      ownerName,
-      items: items.sort((a, b) => (a.week.rate ?? 100) - (b.week.rate ?? 100)),
-    }));
+    const groups = [...groupedMap.entries()].map(([ownerName, items]) => {
+      const sortedItems = items.sort((a, b) => (a.week.rate ?? 100) - (b.week.rate ?? 100));
+      const weekTaken = sortedItems.reduce((sum, item) => sum + (item.week.totalTaken || 0), 0);
+      const weekPlanned = sortedItems.reduce((sum, item) => sum + (item.week.totalPlanned || 0), 0);
+      const monthTaken = sortedItems.reduce((sum, item) => sum + (item.month.totalTaken || 0), 0);
+      const monthPlanned = sortedItems.reduce((sum, item) => sum + (item.month.totalPlanned || 0), 0);
+
+      return {
+        ownerName,
+        items: sortedItems,
+        summary: {
+          weekTaken,
+          weekPlanned,
+          weekRate: weekPlanned > 0 ? Math.round((weekTaken / weekPlanned) * 100) : null,
+          monthTaken,
+          monthPlanned,
+          monthRate: monthPlanned > 0 ? Math.round((monthTaken / monthPlanned) * 100) : null,
+        },
+      };
+    });
 
     return groups.sort((a, b) => {
       const ia = order.indexOf(a.ownerName);
@@ -371,6 +393,14 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       return ia - ib;
     });
   }, [statsData, persons]);
+
+  const statsPersonOptions = useMemo(() => {
+    if (!activePerson?.canSeeAll) return [];
+    const selectable = persons
+      .filter((p) => p.id && p.id !== 'all')
+      .map((p) => ({ id: p.id, name: p.name || 'Bilinmeyen' }));
+    return [{ id: 'all', name: 'Tüm Kişi' }, ...selectable];
+  }, [persons, activePerson]);
 
   if (loading) return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
 
@@ -395,11 +425,46 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
 
       {activeTab === 'stats' ? (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+          {statsPersonOptions.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.statsFilterRow}
+            >
+              {statsPersonOptions.map((option) => {
+                const isActive = statsPersonFilter === option.id;
+                return (
+                  <TouchableOpacity
+                    key={option.id}
+                    style={[styles.statsFilterChip, isActive && styles.statsFilterChipActive]}
+                    onPress={() => setStatsPersonFilter(option.id)}
+                  >
+                    <Text style={[styles.statsFilterChipText, isActive && styles.statsFilterChipTextActive]}>
+                      {option.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
           {groupedStatsData.length === 0 ? (
             <Text style={styles.empty}>İstatistik için yeterli veri yok.</Text>
           ) : groupedStatsData.map((group) => (
             <View key={group.ownerName} style={styles.personStatsGroup}>
               <Text style={styles.personStatsTitle}>{group.ownerName}</Text>
+              <View style={styles.personSummaryCard}>
+                <View style={styles.personSummaryBlock}>
+                  <Text style={styles.personSummaryLabel}>Son 7 Gün</Text>
+                  <Text style={styles.personSummaryRate}>{group.summary.weekRate != null ? `%${group.summary.weekRate}` : '-'}</Text>
+                  <Text style={styles.personSummaryDetail}>{group.summary.weekTaken}/{group.summary.weekPlanned} doz</Text>
+                </View>
+                <View style={styles.personSummaryDivider} />
+                <View style={styles.personSummaryBlock}>
+                  <Text style={styles.personSummaryLabel}>Son 30 Gün</Text>
+                  <Text style={styles.personSummaryRate}>{group.summary.monthRate != null ? `%${group.summary.monthRate}` : '-'}</Text>
+                  <Text style={styles.personSummaryDetail}>{group.summary.monthTaken}/{group.summary.monthPlanned} doz</Text>
+                </View>
+              </View>
               {group.items.map(item => {
             const getRateColor = (r) => r == null ? '#9CA3AF' : r >= 80 ? '#059669' : r >= 50 ? '#D97706' : '#EF4444';
             const getRateLabel = (r) => r == null ? 'Veri yok' : r >= 80 ? 'İyi' : r >= 50 ? 'Orta' : 'Düşük';
@@ -561,8 +626,30 @@ const styles = StyleSheet.create({
   tabBtnActive: { borderBottomWidth: 2, borderBottomColor: '#059669' },
   tabBtnText: { fontSize: 14, fontWeight: '600', color: '#6B7280' },
   tabBtnTextActive: { color: '#059669' },
+  statsFilterRow: { paddingBottom: 10, paddingRight: 6 },
+  statsFilterChip: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginRight: 8,
+  },
+  statsFilterChipActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#34D399',
+  },
+  statsFilterChipText: { color: '#4B5563', fontSize: 12, fontWeight: '600' },
+  statsFilterChipTextActive: { color: '#047857' },
   personStatsGroup: { marginBottom: 12 },
   personStatsTitle: { fontSize: 14, fontWeight: '700', color: '#374151', marginBottom: 8, marginLeft: 2 },
+  personSummaryCard: { backgroundColor: '#ECFDF5', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#A7F3D0', flexDirection: 'row', alignItems: 'center' },
+  personSummaryBlock: { flex: 1, alignItems: 'center' },
+  personSummaryDivider: { width: 1, alignSelf: 'stretch', backgroundColor: '#A7F3D0', marginHorizontal: 10 },
+  personSummaryLabel: { fontSize: 11, color: '#047857', fontWeight: '700' },
+  personSummaryRate: { fontSize: 22, color: '#065F46', fontWeight: '800', marginTop: 4 },
+  personSummaryDetail: { fontSize: 11, color: '#047857', marginTop: 2 },
   statCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 12, elevation: 2 },
   statHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   statMedName: { fontSize: 14, fontWeight: 'bold', color: '#111827', flex: 1 },

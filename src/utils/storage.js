@@ -147,6 +147,7 @@ export const clearFamilyCode = async () => {
 
 // --- ACTIVE PERSON (Aktif Profil) ---
 export const ACTIVE_PERSON_KEY = 'ACTIVE_PERSON_ID';
+export const NOTIFICATION_TARGET_PERSON_IDS_KEY = 'NOTIFICATION_TARGET_PERSON_IDS';
 export const DAY_ROLLOVER_KEY = 'DAY_ROLLOVER_TIME';
 export const SNOOZE_BEFORE_MINUTES_KEY = 'SNOOZE_BEFORE_MINUTES';
 export const SNOOZE_AFTER_MINUTES_KEY = 'SNOOZE_AFTER_MINUTES';
@@ -171,9 +172,40 @@ export const clearActivePerson = async () => {
 export const clearAllData = async () => {
   await AsyncStorage.removeItem(FAMILY_KEY);
   await AsyncStorage.removeItem(ACTIVE_PERSON_KEY);
+  await AsyncStorage.removeItem(NOTIFICATION_TARGET_PERSON_IDS_KEY);
   await AsyncStorage.removeItem(DAY_ROLLOVER_KEY);
   await AsyncStorage.removeItem(SNOOZE_BEFORE_MINUTES_KEY);
   await AsyncStorage.removeItem(SNOOZE_AFTER_MINUTES_KEY);
+};
+
+const sanitizePersonIdList = (personIds) => {
+  if (!Array.isArray(personIds)) return [];
+  return [...new Set(
+    personIds
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+  )];
+};
+
+export const setNotificationTargetPersonIds = async (personIds) => {
+  const sanitized = sanitizePersonIdList(personIds);
+  await AsyncStorage.setItem(NOTIFICATION_TARGET_PERSON_IDS_KEY, JSON.stringify(sanitized));
+  return sanitized;
+};
+
+export const getNotificationTargetPersonIds = async (fallbackPersonId = null) => {
+  const raw = await AsyncStorage.getItem(NOTIFICATION_TARGET_PERSON_IDS_KEY);
+
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      const sanitized = sanitizePersonIdList(parsed);
+      return sanitized;
+    } catch (_) {}
+  }
+
+  const fallback = String(fallbackPersonId || '').trim();
+  return fallback ? [fallback] : [];
 };
 
 export const setDayRolloverTime = async (timeStr) => {

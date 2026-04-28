@@ -4,10 +4,10 @@ import {
   Alert, Modal, TextInput, ScrollView, Platform, ActivityIndicator, Switch, StatusBar
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { CameraView } from 'expo-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
-import { getMeds, getPersons, addMed, editMed, deleteMed, markAsTaken, getBarcodeCatalogEntry, saveBarcodeCatalogEntry } from '../utils/storage';
+import { getMeds, getPersons, addMed, editMed, deleteMed, markAsTaken, getBarcodeCatalogEntry, saveBarcodeCatalogEntry, getNotificationTargetPersonIds } from '../utils/storage';
 import { parseITSBarcode } from '../utils/barcodeParser';
 import { searchBarcodeFromAPI } from '../utils/api';
 import { parseMedicineTextFromOCR } from '../utils/ocrParser';
@@ -27,6 +27,7 @@ const WEEK_DAY_OPTIONS = [
 
 export default function MedsScreen({ activePerson }) {
   const cameraRef = useRef(null);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
   const [meds, setMeds] = useState([]);
   const [persons, setPersons] = useState([]);
@@ -190,9 +191,18 @@ export default function MedsScreen({ activePerson }) {
 
       const hasPerm = await requestNotificationPermissions();
       if (hasPerm) {
-        const all = await getMeds();
+        const [all, persons, selectedPersonIds] = await Promise.all([
+          getMeds(),
+          getPersons(),
+          getNotificationTargetPersonIds(activePerson?.id),
+        ]);
         if (activePerson?.id) {
-          await rebuildRemindersForPerson({ meds: all, activePerson });
+          await rebuildRemindersForPerson({
+            meds: all,
+            activePerson,
+            persons,
+            selectedPersonIds,
+          });
         }
       }
 
@@ -213,8 +223,17 @@ export default function MedsScreen({ activePerson }) {
 
         const hasPerm = await requestNotificationPermissions();
         if (hasPerm && activePerson?.id) {
-          const all = await getMeds();
-          await rebuildRemindersForPerson({ meds: all, activePerson });
+          const [all, persons, selectedPersonIds] = await Promise.all([
+            getMeds(),
+            getPersons(),
+            getNotificationTargetPersonIds(activePerson.id),
+          ]);
+          await rebuildRemindersForPerson({
+            meds: all,
+            activePerson,
+            persons,
+            selectedPersonIds,
+          });
         }
 
         loadData();
@@ -278,12 +297,26 @@ export default function MedsScreen({ activePerson }) {
 
   const expiredMeds = meds.filter(med => med.isActive !== false && med.expiryDate && checkExpiryStatus(med.expiryDate) === 'expired');
 
-  const openBarcodeScanner = () => {
+  const ensureCameraPermission = async () => {
+    if (cameraPermission?.granted) return true;
+
+    const response = await requestCameraPermission();
+    if (response?.granted) return true;
+
+    Alert.alert('Kamera İzni Gerekli', 'Karekod okutmak için kamera izni vermen gerekiyor.');
+    return false;
+  };
+
+  const openBarcodeScanner = async () => {
+    const granted = await ensureCameraPermission();
+    if (!granted) return;
     setCameraMode('barcode');
     setCameraVisible(true);
   };
 
-  const openOCRScanner = () => {
+  const openOCRScanner = async () => {
+    const granted = await ensureCameraPermission();
+    if (!granted) return;
     setCameraMode('ocr');
     setCameraVisible(true);
   };
@@ -755,12 +788,31 @@ export default function MedsScreen({ activePerson }) {
 
       <Modal visible={cameraVisible} animationType="slide">
         <View style={styles.cameraModal}>
-          <CameraView
-            ref={cameraRef}
-            style={StyleSheet.absoluteFill}
-            onBarcodeScanned={cameraMode === 'barcode' ? handleBarcodeScanned : undefined}
-            barcodeScannerSettings={{ barcodeTypes: ['datamatrix', 'qr', 'code128', 'ean13', 'ean8'] }}
-          />
+          {cameraPermission == null ? (
+            <View style={styles.cameraFallback}>
+              <ActivityIndicator color="#fff" />
+              <Text style={styles.cameraFallbackText}>Kamera hazırlanıyor...</Text>
+            </View>
+          ) : !cameraPermission.granted ? (
+            <View style={styles.cameraFallback}>
+              <Text style={styles.cameraFallbackText}>Kamera izni verilmedi.</Text>
+              <TouchableOpacity style={styles.captureBtn} onPress={ensureCameraPermission}>
+                <Text style={styles.captureBtnText}>İzni Tekrar İste</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <CameraView
+              ref={cameraRef}
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              onMountError={() => {
+                Alert.alert('Hata', 'Kamera açılırken bir sorun oluştu.');
+                setCameraVisible(false);
+              }}
+              onBarcodeScanned={cameraMode === 'barcode' ? handleBarcodeScanned : undefined}
+              barcodeScannerSettings={{ barcodeTypes: ['datamatrix', 'qr', 'code128', 'ean13', 'ean8'] }}
+            />
+          )}
           <View style={styles.scannerOverlay}>
             <View style={styles.scannerCutout} />
             {cameraMode === 'ocr' ? (
@@ -860,6 +912,8 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: '#059669', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', padding: 12, borderRadius: 10, marginTop: 10, marginBottom: 10 },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginLeft: 8 },
   cameraModal: { flex: 1, backgroundColor: '#000' },
+  cameraFallback: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111827' },
+  cameraFallbackText: { color: '#fff', marginTop: 12, marginBottom: 16, fontSize: 16 },
   scannerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center' },
   scannerCutout: { width: 250, height: 250, borderRadius: 20, borderWidth: 2, borderColor: '#fff' },
   overlayHint: { color: '#fff', marginTop: 20, fontWeight: '600' },
