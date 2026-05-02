@@ -245,8 +245,10 @@ export default function App() {
           medId: data.medId,
           medName: data.medName,
           minutes: snoozeMinutes,
+          personId: data.personId,
           targetPersonId: data.targetPersonId,
           targetPersonName: data.targetPersonName,
+          consumeAmt: data.consumeAmt,
         });
 
         if (notificationId) {

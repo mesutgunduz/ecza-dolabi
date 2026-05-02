@@ -244,7 +244,15 @@ export const scheduleMedReminders = async (med, targetPerson = null) => {
   }
 };
 
-export const scheduleReminderSnooze = async ({ medId, medName, minutes, targetPersonId = null, targetPersonName = '' }) => {
+export const scheduleReminderSnooze = async ({
+  medId,
+  medName,
+  minutes,
+  targetPersonId = null,
+  targetPersonName = '',
+  personId = null,
+  consumeAmt = null,
+}) => {
   if (!medId || !minutes || minutes <= 0) {
     throw new Error('INVALID_SNOOZE_INPUT');
   }
@@ -256,6 +264,10 @@ export const scheduleReminderSnooze = async ({ medId, medName, minutes, targetPe
 
   const triggerDate = new Date(Date.now() + minutes * 60 * 1000);
   const personName = String(targetPersonName || '').trim();
+  const parsedConsumeAmt = Number(consumeAmt);
+  const normalizedConsumeAmt = Number.isFinite(parsedConsumeAmt) && parsedConsumeAmt > 0
+    ? parsedConsumeAmt
+    : null;
 
   const identifier = await Notifications.scheduleNotificationAsync({
     content: {
@@ -266,8 +278,10 @@ export const scheduleReminderSnooze = async ({ medId, medName, minutes, targetPe
         medName,
         source: 'med-snooze',
         snoozeMinutes: minutes,
+        personId: personId || 'all',
         targetPersonId: targetPersonId || 'all',
         targetPersonName: personName,
+        consumeAmt: normalizedConsumeAmt,
       },
       categoryIdentifier: MED_REMINDER_CATEGORY_ID,
       sound: 'default',
