@@ -1,6 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Helpers
     function hasFamilyDoc(familyCode) {
       return exists(/databases/$(database)/documents/families/$(familyCode));
     }
@@ -12,35 +14,87 @@ service cloud.firestore {
         && family.familyPassword.size() >= 4;
     }
 
-    // NOTE:
-    // This app currently does not use Firebase Authentication.
-    // Without request.auth, Firestore rules cannot strongly identify users.
-    // These rules harden structure and prevent broad listing, but true per-user
-    // isolation requires adding Firebase Auth in the next phase.
+    function familyOk(familyCode) {
+      return hasFamilyDoc(familyCode) && validFamilyDocShape(familyCode);
+    }
+
+    // NOTE: This app has no Firebase Authentication.
+    // The familyCode + familyPassword pair acts as the shared secret.
+    // True per-user isolation requires adding Firebase Auth in the next phase.
 
     match /families/{familyCode} {
-      // Block listing all families.
+      // Block listing all family codes.
       allow list: if false;
 
-      // Allow reading only the selected family document.
+      // Allow reading the family root doc (needed for login / password check).
+      // LIMITATION: anyone who guesses a familyCode can read the password hash.
+      // Mitigated by: familyCode must be known (not guessable from the outside
+      // because listing is blocked), and passwords are validated app-side.
       allow get: if true;
 
-      // Family root doc may be created once with required fields.
-      allow create: if request.resource.data.familyCode == familyCode
+      // Family root may be created once with required fields only.
+      allow create: if request.resource.data.keys().hasOnly([
+                        'familyCode', 'familyPassword', 'createdAt', 'updatedAt', 'migratedFromLegacy'
+                      ])
+        && request.resource.data.familyCode == familyCode
         && request.resource.data.familyPassword is string
-        && request.resource.data.familyPassword.size() >= 4;
+        && request.resource.data.familyPassword.size() >= 4
+        && request.resource.data.createdAt is number
+        && request.resource.data.updatedAt is number;
 
-      // Allow updates but keep immutable familyCode.
+      // Allow updates but keep familyCode immutable; require valid password field.
       allow update: if request.resource.data.familyCode == resource.data.familyCode
         && request.resource.data.familyPassword is string
-        && request.resource.data.familyPassword.size() >= 4;
+        && request.resource.data.familyPassword.size() >= 4
+        && request.resource.data.updatedAt is number;
 
       // Never delete the family root doc from client.
       allow delete: if false;
 
-      match /{subCollection}/{docId} {
-        // Only allow access when family root exists and has expected shape.
-        allow read, write: if hasFamilyDoc(familyCode) && validFamilyDocShape(familyCode);
+      // --- persons subcollection ---
+      match /persons/{docId} {
+        allow read: if familyOk(familyCode);
+        allow create: if familyOk(familyCode)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0;
+        allow update: if familyOk(familyCode)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0;
+        allow delete: if familyOk(familyCode);
+      }
+
+      // --- meds subcollection ---
+      match /meds/{docId} {
+        allow read: if familyOk(familyCode);
+        allow create: if familyOk(familyCode)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.personId is string;
+        allow update: if familyOk(familyCode)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0;
+        allow delete: if familyOk(familyCode);
+      }
+
+      // --- logs subcollection ---
+      match /logs/{docId} {
+        allow read: if familyOk(familyCode);
+        allow create: if familyOk(familyCode)
+          && request.resource.data.medId is string
+          && request.resource.data.personId is string
+          && request.resource.data.date is string;
+        allow update: if familyOk(familyCode);
+        allow delete: if familyOk(familyCode);
+      }
+
+      // --- meta subcollection (reorderCart etc.) ---
+      match /meta/{docId} {
+        allow read, write: if familyOk(familyCode);
+      }
+
+      // Block any other subcollection entirely.
+      match /{unknownCollection}/{docId} {
+        allow read, write: if false;
       }
     }
 
