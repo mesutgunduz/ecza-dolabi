@@ -9,6 +9,8 @@ import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollov
 import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText, Edit2, FileDown } from 'lucide-react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system';
+import { Asset } from 'expo-asset';
 import { useTranslation } from '../i18n/LanguageContext';
 
 export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
@@ -486,12 +488,38 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
 
         const taken = dayLogs.length;
         const missed = Math.max(0, planned - taken);
+
+        const takenCountByMed = {};
+        for (const log of dayLogs) {
+          takenCountByMed[log.medId] = (takenCountByMed[log.medId] || 0) + 1;
+        }
+        const missedMeds = [];
+        for (const med of meds) {
+          const isDirect = med.personId === personId;
+          const isShared = med.personId === 'all';
+          if (!isDirect && !isShared) continue;
+          const plannedDose = parseInt(med.dailyDose, 10);
+          if (!plannedDose || plannedDose <= 0) continue;
+          if (med.scheduleType === 'weekly') {
+            const selectedDays = Array.isArray(med.weeklyDays)
+              ? med.weeklyDays.map((v) => Number(v)).filter((v) => v >= 0 && v <= 6)
+              : [];
+            if (!selectedDays.includes(day.date.getDay())) continue;
+          }
+          const takenForMed = takenCountByMed[med.id] || 0;
+          const missedForMed = Math.max(0, plannedDose - takenForMed);
+          if (missedForMed > 0) {
+            missedMeds.push(med.name + (missedForMed > 1 ? ` (x${missedForMed})` : ''));
+          }
+        }
+
         return {
           ...day,
           taken,
           planned,
           missed,
           logs: dayLogs,
+          missedMeds,
         };
       }).filter((day) => day.planned > 0 || day.taken > 0);
 
@@ -523,26 +551,94 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
   const handleExportPDF = useCallback(async () => {
     if (personalUsageReports.length === 0) return;
     const periodTypeLabel = reportRangeType === 'week' ? t('weeklyView') : t('monthlyView');
+
+    // Logo'yu base64'e çevir
+    let logoHtml = '';
+    try {
+      const [asset] = await Asset.loadAsync(require('../../assets/icon.png'));
+      const localUri = asset.localUri || asset.uri;
+      const base64 = await FileSystem.readAsStringAsync(localUri, { encoding: FileSystem.EncodingType.Base64 });
+      logoHtml = `<img src="data:image/png;base64,${base64}" style="width:48px;height:48px;vertical-align:middle;margin-right:10px;border-radius:10px;" />`;
+    } catch (_) {}
+
     let html = `<html><head><meta charset="utf-8"><style>
-      body{font-family:sans-serif;padding:20px;color:#111;}
-      h1{color:#059669;font-size:18px;margin-bottom:4px;}
-      h2{font-size:14px;color:#1f2937;margin:16px 0 4px;}
+      body{font-family:sans-serif;padding:24px;color:#111;}
+      .app-header{display:flex;align-items:center;margin-bottom:4px;}
+      .app-name{font-size:22px;font-weight:bold;color:#059669;vertical-align:middle;}
+      .report-title{font-size:14px;color:#374151;margin:2px 0 2px;}
+      h2{font-size:15px;color:#1f2937;margin:20px 0 4px;border-bottom:2px solid #059669;padding-bottom:4px;}
       .period{font-size:12px;color:#6b7280;margin-bottom:16px;}
-      table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12px;}
-      th{background:#059669;color:#fff;padding:6px 8px;text-align:left;}
-      td{padding:5px 8px;border-bottom:1px solid #e5e7eb;}
-      tr:nth-child(even) td{background:#f0fdf4;}
-      .summary{font-size:11px;color:#6b7280;margin-bottom:8px;}
+      .summary{font-size:12px;color:#6b7280;margin-bottom:10px;}
+      .day-block{margin-bottom:14px;padding:10px;border:1px solid #e5e7eb;border-radius:6px;page-break-inside:avoid;break-inside:avoid;}
+      .day-title{font-size:13px;font-weight:bold;color:#111;margin-bottom:6px;}
+      .day-stats{font-size:11px;color:#6b7280;margin-bottom:6px;}
+      .taken-list{margin:4px 0 6px 12px;}
+      .taken-item{font-size:12px;color:#065f46;margin:2px 0;}
+      .missed-list{margin:4px 0 6px 12px;}
+      .missed-item{font-size:12px;color:#dc2626;margin:2px 0;}
+      .label-taken{font-size:11px;font-weight:bold;color:#059669;}
+      .label-missed{font-size:11px;font-weight:bold;color:#dc2626;}
     </style></head><body>`;
-    html += `<h1>${t('reportDetails')} — ${periodTypeLabel}</h1><p class="period">${reportPeriodLabel}</p>`;
+    html += `<div class="app-header">${logoHtml}<span class="app-name">Ecza Dolabım</span></div>`;
+    html += `<p class="report-title">${t('reportDetails')} — ${periodTypeLabel}</p><p class="period">${reportPeriodLabel}</p>`;
+
     for (const report of personalUsageReports) {
       html += `<h2>${report.ownerName}</h2>`;
-      html += `<p class="summary">${t('takenDoses')}: ${report.summary.taken} / ${t('plannedDoses')}: ${report.summary.planned} / ${t('missedDoses')}: ${report.summary.missed}</p>`;
-      html += `<table><tr><th>${t('dateLabel')}</th><th>${t('takenDoses')}</th><th>${t('plannedDoses')}</th><th>${t('missedDoses')}</th></tr>`;
-      for (const row of report.dailyRows) {
-        html += `<tr><td>${row.label}</td><td>${row.taken}</td><td>${row.planned}</td><td>${row.missed}</td></tr>`;
+      html += `<p class="summary">${t('takenDoses')}: ${report.summary.taken} &nbsp;|&nbsp; ${t('plannedDoses')}: ${report.summary.planned} &nbsp;|&nbsp; ${t('missedDoses')}: ${report.summary.missed}</p>`;
+
+      for (const day of report.dailyRows) {
+        html += `<div class="day-block">`;
+        html += `<div class="day-title">${day.fullLabel || day.label}</div>`;
+        html += `<div class="day-stats">${t('takenDoses')}: ${day.taken} / ${t('plannedDoses')}: ${day.planned} / ${t('missedDoses')}: ${day.missed}</div>`;
+
+        // Alınan ilaçlar
+        if (day.logs && day.logs.length > 0) {
+          html += `<div class="label-taken">✓ ${t('takenDoses')}</div><ul class="taken-list">`;
+          for (const log of day.logs) {
+            html += `<li class="taken-item">${log.time || '--:--'} &nbsp; ${log.medName || '-'} &nbsp; (${log.dosage || 1})</li>`;
+          }
+          html += `</ul>`;
+        }
+
+        // Atlanmış ilaçlar: planlanmış ama log'da olmayan
+        if (day.missed > 0) {
+          // Her ilaç için bu günde kaç kez planlandığını ve kaç kez log'a girdiğini hesapla
+          const takenCountByMed = {};
+          for (const log of (day.logs || [])) {
+            takenCountByMed[log.medId] = (takenCountByMed[log.medId] || 0) + 1;
+          }
+
+          const missedMeds = [];
+          for (const med of meds) {
+            const isDirect = med.personId === report.personId;
+            const isShared = med.personId === 'all';
+            if (!isDirect && !isShared) continue;
+            const plannedDose = parseInt(med.dailyDose, 10);
+            if (!plannedDose || plannedDose <= 0) continue;
+            if (med.scheduleType === 'weekly') {
+              const selectedDays = Array.isArray(med.weeklyDays)
+                ? med.weeklyDays.map((v) => Number(v)).filter((v) => v >= 0 && v <= 6)
+                : [];
+              if (!selectedDays.includes(day.date.getDay())) continue;
+            }
+            const takenForMed = takenCountByMed[med.id] || 0;
+            const missedForMed = Math.max(0, plannedDose - takenForMed);
+            if (missedForMed > 0) {
+              missedMeds.push(`${med.name}${missedForMed > 1 ? ` (x${missedForMed})` : ''}`);
+            }
+          }
+
+          if (missedMeds.length > 0) {
+            html += `<div class="label-missed">✗ ${t('missedDoses')}</div><ul class="missed-list">`;
+            for (const name of missedMeds) {
+              html += `<li class="missed-item">${name}</li>`;
+            }
+            html += `</ul>`;
+          }
+        }
+
+        html += `</div>`;
       }
-      html += `</table>`;
     }
     html += `</body></html>`;
     try {
@@ -551,7 +647,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
     } catch (e) {
       Alert.alert(t('error'), e.message);
     }
-  }, [personalUsageReports, reportPeriodLabel, reportRangeType, t]);
+  }, [personalUsageReports, reportPeriodLabel, reportRangeType, meds, t]);
 
   const statsPersonOptions = useMemo(() => {
     if (!activePerson?.canSeeAll) return [];
@@ -663,6 +759,9 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
                           {day.logs.length > 0 ? day.logs.map((log) => (
                             <Text key={log.id} style={styles.dayUsageLog}>• {log.time || '--:--'} - {log.medName || t('medicineFallback')} ({log.dosage || 1})</Text>
                           )) : <Text style={styles.dayUsageEmpty}>{t('noUsageOnDay')}</Text>}
+                          {day.missedMeds && day.missedMeds.length > 0 && day.missedMeds.map((name, i) => (
+                            <Text key={`missed-${i}`} style={styles.dayUsageMissedMed}>✗ {name}</Text>
+                          ))}
                         </View>
                       ))}
                     </View>
@@ -883,6 +982,7 @@ const styles = StyleSheet.create({
   dayUsageMeta: { fontSize: 11, color: '#6B7280', marginTop: 2, marginBottom: 6 },
   dayUsageLog: { fontSize: 11, color: '#374151', marginTop: 2 },
   dayUsageEmpty: { fontSize: 11, color: '#9CA3AF', fontStyle: 'italic' },
+  dayUsageMissedMed: { fontSize: 11, color: '#DC2626', marginTop: 1 },
   statsFilterRow: { paddingBottom: 10, paddingRight: 6 },
   statsFilterChip: {
     backgroundColor: '#F3F4F6',
