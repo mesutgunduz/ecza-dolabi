@@ -7,7 +7,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import * as Notifications from 'expo-notifications';
-import { scheduleReminderSnooze } from '../utils/notifications';
+import { getPersistedSnoozedReminders, scheduleReminderSnooze } from '../utils/notifications';
 import { translateMedicineForm, translateMedicineUnit } from '../utils/medicineDisplay';
 import { 
   Check, AlertCircle, Pill, Clock, Search
@@ -29,60 +29,20 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
   const [notificationTargetIds, setNotificationTargetIds] = useState([]);
   const [snoozedReminderByMed, setSnoozedReminderByMed] = useState({});
 
-  const extractTriggerDate = useCallback((trigger) => {
-    if (!trigger) return null;
-
-    if (trigger.date) {
-      const dt = new Date(trigger.date);
-      if (!Number.isNaN(dt.getTime())) return dt;
-    }
-
-    if (trigger.value) {
-      const dt = new Date(trigger.value);
-      if (!Number.isNaN(dt.getTime())) return dt;
-    }
-
-    if (typeof trigger.timestamp === 'number') {
-      const dt = new Date(trigger.timestamp);
-      if (!Number.isNaN(dt.getTime())) return dt;
-    }
-
-    if (typeof trigger.seconds === 'number') {
-      const dt = new Date(trigger.seconds * 1000);
-      if (!Number.isNaN(dt.getTime())) return dt;
-    }
-
-    return null;
-  }, []);
-
   const loadSnoozedReminderState = useCallback(async () => {
     try {
-      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-      const nowMs = Date.now();
+      const persisted = await getPersistedSnoozedReminders({
+        personId: activePerson?.id,
+        includeAll: true,
+      });
       const nextByMed = {};
-
-      scheduled.forEach((item) => {
-        const data = item?.content?.data || item?.request?.content?.data || {};
-        if (String(data?.source || '') !== 'med-snooze') return;
-
-        const medId = String(data?.medId || '').trim();
-        if (!medId) return;
-
-        if (!activePerson?.canSeeAll) {
-          const targetId = String(data?.targetPersonId || data?.personId || '').trim();
-          if (targetId && targetId !== 'all' && targetId !== String(activePerson?.id || '')) return;
-        }
-
-        const triggerDate = extractTriggerDate(item?.trigger || item?.request?.trigger);
-        if (!triggerDate || triggerDate.getTime() <= nowMs) return;
-
-        const existing = nextByMed[medId];
-        if (!existing || triggerDate.getTime() < existing.triggerDate.getTime()) {
-          nextByMed[medId] = {
-            triggerDate,
-            targetPersonName: String(data?.targetPersonName || '').trim(),
-          };
-        }
+      Object.entries(persisted || {}).forEach(([medId, item]) => {
+        const triggerDate = new Date(Number(item?.triggerAt || 0));
+        if (Number.isNaN(triggerDate.getTime())) return;
+        nextByMed[medId] = {
+          triggerDate,
+          targetPersonName: String(item?.targetPersonName || '').trim(),
+        };
       });
 
       setSnoozedReminderByMed(nextByMed);
@@ -90,7 +50,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       console.error('loadSnoozedReminderState failed:', err);
       setSnoozedReminderByMed({});
     }
-  }, [activePerson, extractTriggerDate]);
+  }, [activePerson]);
 
   const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
   const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);

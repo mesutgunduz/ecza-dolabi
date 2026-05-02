@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const MED_REMINDER_CHANNEL_ID = 'med-reminders-v2';
 const REMINDER_LOOKAHEAD_DAYS = 14;
@@ -8,6 +9,53 @@ export const SNOOZE_30_ACTION_ID = 'med-snooze-30';
 export const TAKE_MED_ACTION_ID = 'med-take-now';
 export const CLOSE_ACTION_ID = 'med-close';
 const MED_REMINDER_CATEGORY_ID = 'med-reminder-actions';
+const SNOOZE_STATE_KEY = 'MED_SNOOZE_STATE_V1';
+
+const readSnoozeState = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(SNOOZE_STATE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+};
+
+const writeSnoozeState = async (state) => {
+  try {
+    await AsyncStorage.setItem(SNOOZE_STATE_KEY, JSON.stringify(state || {}));
+  } catch (_) {}
+};
+
+const pruneExpiredSnoozeState = (state) => {
+  const now = Date.now();
+  const next = {};
+  Object.entries(state || {}).forEach(([medId, item]) => {
+    const triggerAt = Number(item?.triggerAt || 0);
+    if (triggerAt > now) {
+      next[medId] = item;
+    }
+  });
+  return next;
+};
+
+export const getPersistedSnoozedReminders = async ({ personId = null, includeAll = true } = {}) => {
+  const state = pruneExpiredSnoozeState(await readSnoozeState());
+  await writeSnoozeState(state);
+
+  const normalizedPersonId = String(personId || '').trim();
+  if (!normalizedPersonId) return state;
+
+  const filtered = {};
+  Object.entries(state).forEach(([medId, item]) => {
+    const targetId = String(item?.targetPersonId || '').trim();
+    if (targetId === normalizedPersonId || (includeAll && targetId === 'all')) {
+      filtered[medId] = item;
+    }
+  });
+  return filtered;
+};
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -157,6 +205,7 @@ export const cancelAllReminderNotifications = async () => {
       await Notifications.cancelScheduledNotificationAsync(notif.identifier);
     }
   }
+  await writeSnoozeState({});
 };
 
 export const rebuildRemindersForPerson = async ({ meds, activePerson, persons = [], selectedPersonIds = [] }) => {
@@ -298,6 +347,14 @@ export const scheduleReminderSnooze = async ({
     throw new Error('SNOOZE_SCHEDULE_FAILED');
   }
 
+  const state = await readSnoozeState();
+  state[String(medId)] = {
+    triggerAt: triggerDate.getTime(),
+    targetPersonId: targetPersonId || personId || 'all',
+    targetPersonName: personName,
+  };
+  await writeSnoozeState(pruneExpiredSnoozeState(state));
+
   return { identifier, triggerDate };
 };
 
@@ -311,5 +368,11 @@ export const cancelMedReminders = async (med) => {
     if (String(notif?.content?.data?.medId) === medId) {
       await Notifications.cancelScheduledNotificationAsync(notif.identifier);
     }
+  }
+
+  const state = await readSnoozeState();
+  if (state[medId]) {
+    delete state[medId];
+    await writeSnoozeState(state);
   }
 };
