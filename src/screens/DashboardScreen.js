@@ -15,7 +15,7 @@ import {
 import { useTranslation } from '../i18n/LanguageContext';
 
 export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const navigation = useNavigation();
   const [meds, setMeds] = useState([]);
   const [persons, setPersons] = useState([]);
@@ -27,6 +27,70 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
   const [snoozeBeforeMinutes, setSnoozeBeforeMinutes] = useState(60);
   const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
   const [notificationTargetIds, setNotificationTargetIds] = useState([]);
+  const [snoozedReminderByMed, setSnoozedReminderByMed] = useState({});
+
+  const extractTriggerDate = useCallback((trigger) => {
+    if (!trigger) return null;
+
+    if (trigger.date) {
+      const dt = new Date(trigger.date);
+      if (!Number.isNaN(dt.getTime())) return dt;
+    }
+
+    if (trigger.value) {
+      const dt = new Date(trigger.value);
+      if (!Number.isNaN(dt.getTime())) return dt;
+    }
+
+    if (typeof trigger.timestamp === 'number') {
+      const dt = new Date(trigger.timestamp);
+      if (!Number.isNaN(dt.getTime())) return dt;
+    }
+
+    if (typeof trigger.seconds === 'number') {
+      const dt = new Date(trigger.seconds * 1000);
+      if (!Number.isNaN(dt.getTime())) return dt;
+    }
+
+    return null;
+  }, []);
+
+  const loadSnoozedReminderState = useCallback(async () => {
+    try {
+      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+      const nowMs = Date.now();
+      const nextByMed = {};
+
+      scheduled.forEach((item) => {
+        const data = item?.content?.data || item?.request?.content?.data || {};
+        if (String(data?.source || '') !== 'med-snooze') return;
+
+        const medId = String(data?.medId || '').trim();
+        if (!medId) return;
+
+        if (!activePerson?.canSeeAll) {
+          const targetId = String(data?.targetPersonId || data?.personId || '').trim();
+          if (targetId && targetId !== 'all' && targetId !== String(activePerson?.id || '')) return;
+        }
+
+        const triggerDate = extractTriggerDate(item?.trigger || item?.request?.trigger);
+        if (!triggerDate || triggerDate.getTime() <= nowMs) return;
+
+        const existing = nextByMed[medId];
+        if (!existing || triggerDate.getTime() < existing.triggerDate.getTime()) {
+          nextByMed[medId] = {
+            triggerDate,
+            targetPersonName: String(data?.targetPersonName || '').trim(),
+          };
+        }
+      });
+
+      setSnoozedReminderByMed(nextByMed);
+    } catch (err) {
+      console.error('loadSnoozedReminderState failed:', err);
+      setSnoozedReminderByMed({});
+    }
+  }, [activePerson, extractTriggerDate]);
 
   const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
   const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
@@ -56,6 +120,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       setSnoozeBeforeMinutes(snoozeCfg.beforeMinutes);
       setSnoozeAfterMinutes(snoozeCfg.afterMinutes);
       setNotificationTargetIds(targetIds);
+      await loadSnoozedReminderState();
 
       if (activePerson && !activePerson.canSeeAll) {
         setFilterPerson(activePerson.id);
@@ -67,7 +132,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
     } finally {
       setLoading(false);
     }
-  }, [activePerson]);
+  }, [activePerson, loadSnoozedReminderState]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData, dataRefreshKey]));
 
@@ -365,6 +430,17 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       const formatted = result?.triggerDate
         ? result.triggerDate.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
         : null;
+
+      if (result?.triggerDate) {
+        setSnoozedReminderByMed((prev) => ({
+          ...prev,
+          [med.id]: {
+            triggerDate: result.triggerDate,
+            targetPersonName: activePerson?.name || '',
+          },
+        }));
+      }
+
       Alert.alert(
         t('alarmSnoozed'),
         formatted
@@ -479,6 +555,16 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
           const canSnoozeNow = isScheduledToday && !isLimitReached && pendingSlots.some(
             (slot) => nowLogicalMinutes >= (slot - snoozeBeforeMinutes) && nowLogicalMinutes <= (slot + snoozeAfterMinutes)
           );
+          const snoozeInfo = snoozedReminderByMed[med.id];
+          const nextReminderDate = snoozeInfo?.triggerDate;
+          const nextReminderLabel = nextReminderDate
+            ? nextReminderDate.toLocaleString(language === 'en' ? 'en-GB' : 'tr-TR', {
+              day: '2-digit',
+              month: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+            : null;
 
           return (
             <View key={med.id} style={styles.medCard}>
@@ -509,6 +595,15 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
                           <Text style={styles.timeTagText}>{t}</Text>
                         </View>
                       ))}
+                    </View>
+                  )}
+
+                  {nextReminderLabel && (
+                    <View style={styles.snoozedInfoTag}>
+                      <Clock size={11} color="#92400E" />
+                      <Text style={styles.snoozedInfoText}>
+                        {t('snoozedNextReminder')}: {nextReminderLabel}
+                      </Text>
                     </View>
                   )}
 
@@ -591,6 +686,8 @@ const styles = StyleSheet.create({
   reminderRow: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 5 },
   timeTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 5, marginBottom: 2, borderWidth: 1, borderColor: '#D1D5DB' },
   timeTagText: { fontSize: 10, color: '#059669', fontWeight: 'bold', marginLeft: 3 },
+  snoozedInfoTag: { flexDirection: 'row', alignItems: 'center', marginTop: 8, backgroundColor: '#FEF3C7', borderColor: '#F59E0B', borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5 },
+  snoozedInfoText: { marginLeft: 5, fontSize: 11, color: '#92400E', fontWeight: '700' },
   notPlannedTag: { marginTop: 8, backgroundColor: '#FFEDD5', borderWidth: 1, borderColor: '#FDBA74', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8 },
   notPlannedTagText: { fontSize: 11, color: '#9A3412', fontWeight: '700' },
   emptyBox: { padding: 40, alignItems: 'center' },
