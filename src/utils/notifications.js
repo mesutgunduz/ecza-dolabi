@@ -197,15 +197,20 @@ const getTargetPersons = ({ persons, selectedPersonIds, fallbackPerson }) => {
     .filter((person) => canPersonReceiveReminder(person));
 };
 
-export const cancelAllReminderNotifications = async () => {
+export const cancelAllReminderNotifications = async ({ includeSnooze = false } = {}) => {
   const scheduled = await Notifications.getAllScheduledNotificationsAsync();
   for (const notif of scheduled) {
     const source = String(notif?.content?.data?.source || '');
-    if (source === 'med-reminder' || source === 'med-snooze') {
+    const shouldCancelReminder = source === 'med-reminder';
+    const shouldCancelSnooze = includeSnooze && source === 'med-snooze';
+    if (shouldCancelReminder || shouldCancelSnooze) {
       await Notifications.cancelScheduledNotificationAsync(notif.identifier);
     }
   }
-  await writeSnoozeState({});
+
+  if (includeSnooze) {
+    await writeSnoozeState({});
+  }
 };
 
 export const rebuildRemindersForPerson = async ({ meds, activePerson, persons = [], selectedPersonIds = [] }) => {
