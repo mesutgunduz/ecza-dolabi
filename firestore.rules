@@ -92,6 +92,14 @@ service cloud.firestore {
         allow read, write: if familyOk(familyCode);
       }
 
+      // --- barcode catalog cache ---
+      match /barcodeCatalog/{docId} {
+        allow read: if familyOk(familyCode);
+        allow create, update: if familyOk(familyCode)
+          && request.resource.data.gtin is string;
+        allow delete: if familyOk(familyCode);
+      }
+
       // Block any other subcollection entirely.
       match /{unknownCollection}/{docId} {
         allow read, write: if false;

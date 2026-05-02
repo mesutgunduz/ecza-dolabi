@@ -6,6 +6,39 @@ export const FAMILY_KEY = 'FAMILY_CODE';
 
 const normalizeFamilyCode = (code) => String(code || '').trim().toUpperCase();
 
+const WRITE_RETRY_DELAYS_MS = [250, 700, 1400];
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRetryableFirestoreError = (error) => {
+  const code = String(error?.code || '').toLowerCase();
+  return [
+    'unavailable',
+    'deadline-exceeded',
+    'resource-exhausted',
+    'aborted',
+    'cancelled',
+    'internal',
+    'unknown',
+  ].includes(code);
+};
+
+const runFirestoreWrite = async (operationName, fn) => {
+  let lastError = null;
+  for (let attempt = 0; attempt <= WRITE_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const canRetry = attempt < WRITE_RETRY_DELAYS_MS.length && isRetryableFirestoreError(error);
+      if (!canRetry) break;
+      await wait(WRITE_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  console.error(`${operationName} failed after retry:`, lastError);
+  throw lastError;
+};
+
 const getFamilyDocRef = (code) => doc(db, 'families', normalizeFamilyCode(code));
 
 const verifyLegacyAdminPin = async (normalizedCode, adminPin) => {
@@ -54,12 +87,12 @@ export const createFamily = async (code, password) => {
   const legacyExists = await hasLegacyFamilyData(normalized);
   if (legacyExists) return { ok: false, reason: 'code-exists' };
 
-  await setDoc(familyRef, {
+  await runFirestoreWrite('createFamily.setDoc', () => setDoc(familyRef, {
     familyCode: normalized,
     familyPassword: pass,
     createdAt: Date.now(),
     updatedAt: Date.now(),
-  });
+  }));
 
   return { ok: true };
 };
@@ -82,7 +115,7 @@ export const loginToFamily = async (code, password, adminPin = '') => {
       const pinCheck = await verifyLegacyAdminPin(normalized, adminPin);
       if (!pinCheck.ok) return pinCheck;
 
-      await updateDoc(familyRef, { familyPassword: pass, updatedAt: Date.now() });
+      await runFirestoreWrite('loginToFamily.updateDoc', () => updateDoc(familyRef, { familyPassword: pass, updatedAt: Date.now() }));
       return { ok: true, migratedLegacy: true };
     }
 
@@ -97,13 +130,13 @@ export const loginToFamily = async (code, password, adminPin = '') => {
   if (!pinCheck.ok) return pinCheck;
 
   // Legacy migration: existing family data had no root auth doc.
-  await setDoc(familyRef, {
+  await runFirestoreWrite('loginToFamily.setDoc', () => setDoc(familyRef, {
     familyCode: normalized,
     familyPassword: pass,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     migratedFromLegacy: true,
-  }, { merge: true });
+  }, { merge: true }));
 
   return { ok: true, migratedLegacy: true };
 };
@@ -127,7 +160,7 @@ export const changeFamilyPassword = async (currentPassword, newPassword) => {
     return { ok: false, reason: 'wrong-password' };
   }
 
-  await updateDoc(familyRef, { familyPassword: next, updatedAt: Date.now() });
+  await runFirestoreWrite('changeFamilyPassword.updateDoc', () => updateDoc(familyRef, { familyPassword: next, updatedAt: Date.now() }));
   return { ok: true };
 };
 
@@ -267,7 +300,7 @@ export const getReorderCartItems = async () => {
     const legacyRaw = await AsyncStorage.getItem(LEGACY_REORDER_CART_KEY);
     const legacyItems = legacyRaw ? JSON.parse(legacyRaw) : [];
     if (Array.isArray(legacyItems) && legacyItems.length > 0) {
-      await setDoc(cartRef, { items: legacyItems, updatedAt: Date.now() }, { merge: true });
+      await runFirestoreWrite('getReorderCartItems.setDoc', () => setDoc(cartRef, { items: legacyItems, updatedAt: Date.now() }, { merge: true }));
       return legacyItems;
     }
 
@@ -285,7 +318,7 @@ export const saveReorderCartItems = async (items) => {
 
     const nextItems = Array.isArray(items) ? items : [];
     const cartRef = getReorderCartDocRef(code);
-    await setDoc(cartRef, { items: nextItems, updatedAt: Date.now() }, { merge: true });
+    await runFirestoreWrite('saveReorderCartItems.setDoc', () => setDoc(cartRef, { items: nextItems, updatedAt: Date.now() }, { merge: true }));
   } catch (e) {
     console.error('saveReorderCartItems failed:', e);
     throw e;
@@ -365,11 +398,11 @@ export const saveBarcodeCatalogEntry = async (gtin, data) => {
     if (!code || !gtin) return;
 
     const ref = doc(db, 'families', code, 'barcodeCatalog', gtin);
-    await setDoc(ref, {
+    await runFirestoreWrite('saveBarcodeCatalogEntry.setDoc', () => setDoc(ref, {
       gtin,
       ...data,
       updatedAt: Date.now(),
-    }, { merge: true });
+    }, { merge: true }));
   } catch (e) {
     console.error('saveBarcodeCatalogEntry failed:', e);
     throw e;
@@ -381,7 +414,7 @@ export const addMed = async (med) => {
   try {
     const code = await getFamilyCode();
     if (!code) return;
-    await addDoc(collection(db, "families", code, "meds"), { isActive: true, ...med });
+    await runFirestoreWrite('addMed.addDoc', () => addDoc(collection(db, "families", code, "meds"), { isActive: true, ...med }));
   } catch (e) {
     console.error('addMed failed:', e);
     throw e;
@@ -392,10 +425,10 @@ export const addPerson = async (person) => {
   try {
     const code = await getFamilyCode();
     if (!code) return;
-    await addDoc(collection(db, "families", code, "persons"), {
+    await runFirestoreWrite('addPerson.addDoc', () => addDoc(collection(db, "families", code, "persons"), {
       receivesNotifications: true,
       ...person,
-    });
+    }));
   } catch (e) {
     console.error('addPerson failed:', e);
     throw e;
@@ -406,7 +439,7 @@ export const addLog = async (log) => {
   try {
     const code = await getFamilyCode();
     if (!code) return;
-    await addDoc(collection(db, "families", code, "logs"), log);
+    await runFirestoreWrite('addLog.addDoc', () => addDoc(collection(db, "families", code, "logs"), log));
   } catch (e) {
     console.error('addLog failed:', e);
     throw e;
@@ -418,7 +451,7 @@ export const editMed = async (id, data) => {
   try {
     const code = await getFamilyCode();
     if (!code) return;
-    await updateDoc(doc(db, "families", code, "meds", id), data);
+    await runFirestoreWrite('editMed.updateDoc', () => updateDoc(doc(db, "families", code, "meds", id), data));
   } catch (e) {
     console.error('editMed failed:', e);
     throw e;
@@ -429,7 +462,7 @@ export const editPerson = async (id, data) => {
   try {
     const code = await getFamilyCode();
     if (!code) return;
-    await updateDoc(doc(db, "families", code, "persons", id), data);
+    await runFirestoreWrite('editPerson.updateDoc', () => updateDoc(doc(db, "families", code, "persons", id), data));
   } catch (e) {
     console.error('editPerson failed:', e);
     throw e;
@@ -440,7 +473,7 @@ export const editLog = async (id, data) => {
   try {
     const code = await getFamilyCode();
     if (!code) return;
-    await updateDoc(doc(db, "families", code, "logs", id), data);
+    await runFirestoreWrite('editLog.updateDoc', () => updateDoc(doc(db, "families", code, "logs", id), data));
   } catch (e) {
     console.error('editLog failed:', e);
     throw e;
@@ -452,7 +485,7 @@ export const deleteMed = async (id) => {
   try {
     const code = await getFamilyCode();
     if (!code) return false;
-    await deleteDoc(doc(db, "families", code, "meds", id));
+    await runFirestoreWrite('deleteMed.deleteDoc', () => deleteDoc(doc(db, "families", code, "meds", id)));
     return true;
   } catch (err) {
     console.error("Delete Med Error:", err);
@@ -463,7 +496,7 @@ export const deleteMed = async (id) => {
 export const deletePerson = async (id) => {
   const code = await getFamilyCode();
   if (!code) return;
-  await deleteDoc(doc(db, "families", code, "persons", id));
+  await runFirestoreWrite('deletePerson.deleteDoc', () => deleteDoc(doc(db, "families", code, "persons", id)));
 };
 
 export const deleteLog = async (id) => {
@@ -483,11 +516,11 @@ export const deleteLog = async (id) => {
       const currentQty = parseFloat(medData?.quantity || 0);
       const consumedQty = parseFloat(logData?.dosage || 1);
       const restoredQty = currentQty + (Number.isFinite(consumedQty) ? consumedQty : 1);
-      await updateDoc(medRef, { quantity: restoredQty.toString() });
+      await runFirestoreWrite('deleteLog.updateMedQuantity', () => updateDoc(medRef, { quantity: restoredQty.toString() }));
     }
   }
 
-  await deleteDoc(logRef);
+  await runFirestoreWrite('deleteLog.deleteDoc', () => deleteDoc(logRef));
 };
 
 // --- ACTIONS ---
