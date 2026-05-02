@@ -19,6 +19,12 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
   const [todayLogs, setTodayLogs] = useState([]);
   const [recentLogs, setRecentLogs] = useState([]);
   const [familySummary, setFamilySummary] = useState([]);
+  const [cabinetSummary, setCabinetSummary] = useState({
+    total: 0,
+    active: 0,
+    passive: 0,
+    sharedTotal: 0,
+  });
   const [persons, setPersons] = useState([]);
   const [rolloverTime, setRolloverTime] = useState('00:00');
   const [snoozeBeforeMinutes, setSnoozeBeforeMinutes] = useState(60);
@@ -60,14 +66,36 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       setRecentLogs(recent);
 
       if (activePerson.canSeeAll) {
+        const total = allMeds.length;
+        const activeCount = allMeds.filter((m) => m.isActive !== false).length;
+        const passiveCount = Math.max(0, total - activeCount);
+        const sharedTotal = allMeds.filter((m) => m.personId === 'all').length;
+
+        setCabinetSummary({
+          total,
+          active: activeCount,
+          passive: passiveCount,
+          sharedTotal,
+        });
+
         const summary = allPersons
-          .filter(p => p.id !== activePerson.id)
+          .filter((p) => p.id && p.id !== 'all')
           .map(p => {
-            const pMeds = allMeds.filter(m => m.personId === p.id && m.isActive !== false);
+            const pMeds = allMeds.filter(m => m.personId === p.id);
+            const pActiveMeds = pMeds.filter((m) => m.isActive !== false);
             const pLogs = allLogs.filter(l => l.personId === p.id && l.date === todayStr);
-            return { ...p, medCount: pMeds.length, takenToday: pLogs.length };
+            return {
+              ...p,
+              medCount: pMeds.length,
+              activeCount: pActiveMeds.length,
+              passiveCount: Math.max(0, pMeds.length - pActiveMeds.length),
+              takenToday: pLogs.length,
+            };
           });
         setFamilySummary(summary);
+      } else {
+        setCabinetSummary({ total: 0, active: 0, passive: 0, sharedTotal: 0 });
+        setFamilySummary([]);
       }
     } catch (err) {
       console.error(err);
@@ -344,6 +372,41 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       </View>
 
       {/* İlaçlarım */}
+      {activePerson?.canSeeAll && (
+        <>
+          <Text style={styles.sectionTitle}>{t('cabinetSummaryTitle')}</Text>
+          <View style={styles.summaryBox}>
+            <View style={styles.summaryStatsRow}>
+              <View style={styles.summaryStatCard}>
+                <Text style={styles.summaryStatValue}>{cabinetSummary.total}</Text>
+                <Text style={styles.summaryStatLabel}>{t('totalMedsCount')}</Text>
+              </View>
+              <View style={styles.summaryStatCard}>
+                <Text style={styles.summaryStatValue}>{cabinetSummary.active}</Text>
+                <Text style={styles.summaryStatLabel}>{t('active')}</Text>
+              </View>
+              <View style={styles.summaryStatCard}>
+                <Text style={styles.summaryStatValue}>{cabinetSummary.passive}</Text>
+                <Text style={styles.summaryStatLabel}>{t('passive')}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.summarySubLine}>{t('sharedMedsCount')}: {cabinetSummary.sharedTotal}</Text>
+
+            <Text style={styles.summaryListTitle}>{t('personMedsBreakdown')}</Text>
+            {familySummary.length > 0 ? familySummary.map((item) => (
+              <View key={item.id} style={styles.summaryPersonRow}>
+                <Text style={styles.summaryPersonName}>{item.name}</Text>
+                <Text style={styles.summaryPersonMeta}>
+                  {item.medCount} {t('totalMedsCount').toLocaleLowerCase(language === 'en' ? 'en-GB' : 'tr-TR')} • {t('active')}: {item.activeCount} • {t('passive')}: {item.passiveCount}
+                </Text>
+              </View>
+            )) : <Text style={styles.summaryEmpty}>{t('noPersonData')}</Text>}
+          </View>
+        </>
+      )}
+
+      {/* İlaçlarım */}
       <Text style={styles.sectionTitle}>{t('myActiveMeds')}</Text>
       {myMeds.map(med => (
         <View key={med.id} style={styles.miniCard}>
@@ -556,4 +619,15 @@ const styles = StyleSheet.create({
   inlineActionBtn: { marginBottom: 10 },
   importBtn: { flex: 1, backgroundColor: '#3B82F6', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 8 },
   backupBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 12, marginLeft: 6 },
+  summaryBox: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginTop: 6, marginBottom: 6 },
+  summaryStatsRow: { flexDirection: 'row', gap: 8 },
+  summaryStatCard: { flex: 1, backgroundColor: '#ECFDF5', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 8, alignItems: 'center' },
+  summaryStatValue: { fontSize: 18, fontWeight: '800', color: '#065F46' },
+  summaryStatLabel: { fontSize: 11, fontWeight: '700', color: '#047857', marginTop: 2 },
+  summarySubLine: { marginTop: 10, fontSize: 12, color: '#4B5563', fontWeight: '600' },
+  summaryListTitle: { marginTop: 10, marginBottom: 6, fontSize: 12, fontWeight: '700', color: '#374151' },
+  summaryPersonRow: { paddingVertical: 7, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  summaryPersonName: { fontSize: 13, fontWeight: '700', color: '#111827' },
+  summaryPersonMeta: { marginTop: 2, fontSize: 11, color: '#6B7280' },
+  summaryEmpty: { fontSize: 12, color: '#9CA3AF', fontStyle: 'italic' },
 });
