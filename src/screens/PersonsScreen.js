@@ -4,12 +4,14 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getPersons, addPerson, deletePerson, editPerson, getMeds, getNotificationTargetPersonIds, setNotificationTargetPersonIds } from '../utils/storage';
 import { Trash2, Edit2, X, Check, Plus, Bell } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { useTranslation } from '../i18n/LanguageContext';
 
 const AVATARS = ['🧑', '👨', '👩', '👱‍♂️', '👱‍♀️', '🧔', '👦', '👧', '👴', '👵', '👶', '👤'];
 const RELATIONS = ['Ben', 'Eşim', 'Oğlum', 'Kızım', 'Diğer'];
 const GENDERS = ['Erkek', 'Kadın'];
 
 export default function PersonsScreen({ activePerson, onNotificationTargetsChange }) {
+  const { t } = useTranslation();
   const [persons, setPersons] = useState([]);
   const [notificationTargets, setNotificationTargets] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
@@ -24,6 +26,21 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
   const [receivesNotifications, setReceivesNotifications] = useState(true);
   const [pin, setPin] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  const translateRelation = (value) => {
+    if (value === 'Ben') return t('selfRelation');
+    if (value === 'Eşim') return t('spouseRelation');
+    if (value === 'Oğlum') return t('sonRelation');
+    if (value === 'Kızım') return t('daughterRelation');
+    if (value === 'Diğer') return t('otherRelation');
+    return value;
+  };
+
+  const translateGender = (value) => {
+    if (value === 'Erkek') return t('male');
+    if (value === 'Kadın') return t('female');
+    return value;
+  };
 
   const handleDateChange = (event, selectedDate) => {
     setShowDatePicker(false);
@@ -99,7 +116,7 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
   };
 
   const handleSave = async () => {
-    if (name.trim() === '') { Alert.alert("Hata", "Kişi ismi boş olamaz."); return; }
+    if (name.trim() === '') { Alert.alert(t('error'), t('personNameRequired')); return; }
     const payload = { 
       name: name.trim(), 
       gender, 
@@ -128,9 +145,9 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
     const allMeds = await getMeds();
     if (allMeds.some(m => m.personId === id && m.isActive !== false)) {
       if (Platform.OS === 'web') {
-        alert("Kişi Silinemez! 🛑\nBu kişiye atanmış AKTİF ilaçlar var. Lütfen önce ilaçları silin veya başka birine aktarın.");
+        alert(`${t('personDeleteBlocked')}\n${t('personDeleteBlockedDesc')}`);
       } else {
-        Alert.alert("Kişi Silinemez! 🛑", "Bu kişiye atanmış aktif ilaçlar var. Lütfen önce ilaçları başka birine aktarın.");
+        Alert.alert(t('personDeleteBlocked'), t('personDeleteBlockedDesc'));
       }
       return;
     }
@@ -147,11 +164,11 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
     };
 
     if (Platform.OS === 'web') {
-      if (window.confirm("Bu kişiyi silmek istediğinize emin misiniz?")) pDelete();
+      if (window.confirm(t('confirmDeletePerson'))) pDelete();
     } else {
-      Alert.alert("Emin Misiniz?", "Silmek istediğinize emin misiniz?", [
-        { text: "Vazgeç", style: "cancel" },
-        { text: "Sil", style: "destructive", onPress: pDelete }
+      Alert.alert(t('areYouSure'), t('confirmDeletePerson'), [
+        { text: t('cancel'), style: 'cancel' },
+        { text: t('delete'), style: 'destructive', onPress: pDelete }
       ]);
     }
   };
@@ -160,8 +177,8 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
     <View style={styles.container}>
       <View style={styles.headerArea}>
         <View>
-          <Text style={styles.mainTitle}>Aile Bireyleri</Text>
-          <Text style={styles.subTitle}>İlaç takibi yapılacak kişileri yönetin</Text>
+          <Text style={styles.mainTitle}>{t('familyMembers')}</Text>
+          <Text style={styles.subTitle}>{t('managePersons')}</Text>
         </View>
         <TouchableOpacity style={styles.mainAddBtn} onPress={() => openForm(null)}>
           <Plus color="#fff" size={24} />
@@ -181,16 +198,16 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
               <View style={styles.cardContent}>
                 <Text style={styles.nameText}>{item.name}</Text>
                 <View style={styles.tagsRow}>
-                  {item.relation && <Text style={styles.tagText}>{item.relation}</Text>}
-                  {age !== null && <Text style={styles.tagText}>• {age} Yaşında</Text>}
-                  {item.gender && <Text style={[styles.tagText, { color: isFemale ? '#EC4899' : '#3B82F6' }]}>• {item.gender}</Text>}
+                  {item.relation && <Text style={styles.tagText}>{translateRelation(item.relation)}</Text>}
+                  {age !== null && <Text style={styles.tagText}>• {age} {t('ageYearsOld')}</Text>}
+                  {item.gender && <Text style={[styles.tagText, { color: isFemale ? '#EC4899' : '#3B82F6' }]}>• {translateGender(item.gender)}</Text>}
                 </View>
                 <Text style={styles.deviceNotifText}>
                   {item.receivesNotifications === false
-                    ? 'Bildirim kapalı'
+                    ? t('notificationsOff')
                     : notificationTargets.includes(item.id)
-                      ? 'Bu cihazda bildirimi açık'
-                      : 'Bu cihazda bildirimi kapalı'}
+                      ? t('notificationsOnThisDevice')
+                      : t('notificationsOffThisDevice')}
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -217,7 +234,7 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
             </View>
           );
         }}
-        ListEmptyComponent={<Text style={styles.emptyText}>Henüz sisteme kimse eklenmemiş.</Text>}
+        ListEmptyComponent={<Text style={styles.emptyText}>{t('emptyPersons')}</Text>}
       />
 
       <Modal visible={modalVisible} transparent={true} animationType="slide">
@@ -225,10 +242,10 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
           <ScrollView contentContainerStyle={{justifyContent:'center', flexGrow:1, padding: 16}}>
             <View style={styles.formBox}>
               <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
-                <Text style={styles.formTitle}>{editingId ? 'Kişiyi Düzenle' : 'Yeni Kişi Ekle'}</Text>
+                <Text style={styles.formTitle}>{editingId ? t('editPerson') : t('newPerson')}</Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}><X color="#6B7280" size={24}/></TouchableOpacity>
               </View>
-              <Text style={styles.label}>Avatar Seçimi:</Text>
+              <Text style={styles.label}>{t('avatarSelection')}:</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom: 10}}>
                 {AVATARS.map((emoji, idx) => (
                   <TouchableOpacity key={idx} style={[styles.avatarSelectChip, avatar === emoji && styles.avatarSelectChipActive]} onPress={() => setAvatar(emoji)}>
@@ -236,39 +253,39 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-              <Text style={styles.label}>İsim:</Text>
-              <TextInput style={styles.input} placeholder="İsim yazınız" value={name} onChangeText={setName} />
+              <Text style={styles.label}>{t('personName')}:</Text>
+              <TextInput style={styles.input} placeholder={t('namePlaceholder')} value={name} onChangeText={setName} />
               <View style={styles.row}>
                 <View style={{flex: 1, marginRight: 8}}>
-                  <Text style={styles.label}>Doğum Tarihi:</Text>
+                  <Text style={styles.label}>{t('birthdate')}:</Text>
                   <View style={{flexDirection: 'row', alignItems: 'center'}}>
                     <TextInput style={[styles.input, {flex: 1, marginBottom: 0}]} placeholder="24.10.1985" value={birthdate} onChangeText={setBirthdate} />
                     <TouchableOpacity onPress={() => setShowDatePicker(true)} style={{marginLeft: 5, padding: 10, backgroundColor: '#E5E7EB', borderRadius: 8}}><Text>📅</Text></TouchableOpacity>
                   </View>
                 </View>
                 <View style={{flex: 1, marginLeft: 8}}>
-                  <Text style={styles.label}>Cinsiyet:</Text>
+                  <Text style={styles.label}>{t('gender')}:</Text>
                   <View style={{flexDirection: 'row', justifyContent: 'space-between'}}>
                     {GENDERS.map((g) => (
                       <TouchableOpacity key={g} style={[styles.smallChip, gender === g && (g === 'Erkek' ? styles.chipBlue : styles.chipPink)]} onPress={() => setGender(g)}>
-                        <Text style={[styles.smallChipText, gender === g && {color: '#fff'}]}>{g}</Text>
+                        <Text style={[styles.smallChipText, gender === g && {color: '#fff'}]}>{translateGender(g)}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 </View>
               </View>
-              <Text style={styles.label}>Yakınlık Derecesi:</Text>
+              <Text style={styles.label}>{t('relation')}:</Text>
               <View style={{flexDirection: 'row', flexWrap: 'wrap', marginBottom: 15}}>
                 {RELATIONS.map(rel => (
                   <TouchableOpacity key={rel} style={[styles.relationChip, relation === rel && styles.relationChipActive]} onPress={() => setRelation(rel)}>
-                    <Text style={[styles.relationChipText, relation === rel && {color: '#fff'}]}>{rel}</Text>
+                    <Text style={[styles.relationChipText, relation === rel && {color: '#fff'}]}>{translateRelation(rel)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
               <View style={styles.permissionRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.permissionLabel}>👑 Tüm Aileyi Görebilir</Text>
-                  <Text style={styles.permissionDesc}> Dashboard'da "Tüm Aileyi Göster" butonunu görebilir.</Text>
+                  <Text style={styles.permissionLabel}>👑 {t('canSeeWholeFamily')}</Text>
+                  <Text style={styles.permissionDesc}> {t('canSeeWholeFamilyDesc')}</Text>
                 </View>
                 <TouchableOpacity onPress={() => setCanSeeAll(!canSeeAll)} style={[styles.toggleSwitch, canSeeAll && styles.toggleSwitchOn]}>
                   <View style={[styles.toggleKnob, canSeeAll && styles.toggleKnobOn]} />
@@ -276,8 +293,8 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
               </View>
               <View style={styles.permissionRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.permissionLabel}>🔔 Bildirim Alabilir</Text>
-                  <Text style={styles.permissionDesc}>Bu kişi için yerel ilaç hatırlatmaları aktif olsun.</Text>
+                  <Text style={styles.permissionLabel}>🔔 {t('canReceiveNotifications')}</Text>
+                  <Text style={styles.permissionDesc}>{t('canReceiveNotificationsDesc')}</Text>
                 </View>
                 <TouchableOpacity
                   onPress={() => setReceivesNotifications(!receivesNotifications)}
@@ -288,22 +305,22 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
               </View>
               {canSeeAll && (
                 <View style={styles.pinBox}>
-                  <Text style={styles.label}>Admin Giriş Şifresi (4 Haneli):</Text>
+                  <Text style={styles.label}>{t('adminPinLabel')}:</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="Örn: 1234"
+                    placeholder={t('adminPinPlaceholder')}
                     value={pin}
                     onChangeText={(val) => setPin(val.replace(/[^0-9]/g, '').slice(0, 4))}
                     keyboardType="numeric"
                     maxLength={4}
                     secureTextEntry
                   />
-                  <Text style={styles.pinInfo}>Bu şifre profil seçerken sorulacaktır.</Text>
+                  <Text style={styles.pinInfo}>{t('adminPinInfo')}</Text>
                 </View>
               )}
               <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
                 <Check color="#fff" size={20} />
-                <Text style={styles.saveBtnText}>Profili Kaydet</Text>
+                <Text style={styles.saveBtnText}>{t('saveProfile')}</Text>
               </TouchableOpacity>
               {Platform.OS !== 'web' && showDatePicker && (
                 <DateTimePicker value={new Date()} mode="date" display="default" onChange={handleDateChange} />

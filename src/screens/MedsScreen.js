@@ -12,7 +12,8 @@ import { parseITSBarcode } from '../utils/barcodeParser';
 import { searchBarcodeFromAPI } from '../utils/api';
 import { parseMedicineTextFromOCR } from '../utils/ocrParser';
 import { requestNotificationPermissions, rebuildRemindersForPerson } from '../utils/notifications';
-import { Plus, Trash2, Edit2, X, Check, Search, Bell, Scan, ScanSearch, Clock, AlertCircle } from 'lucide-react-native';
+import { Plus, Trash2, Edit2, X, Check, Search, Bell, BellOff, Scan, ScanSearch, Clock, AlertCircle } from 'lucide-react-native';
+import { useTranslation } from '../i18n/LanguageContext';
 
 const defaultBarcodeMeta = { gtin: '', serial: '', batch: '' };
 const WEEK_DAY_OPTIONS = [
@@ -26,6 +27,7 @@ const WEEK_DAY_OPTIONS = [
 ];
 
 export default function MedsScreen({ activePerson }) {
+  const { t } = useTranslation();
   const cameraRef = useRef(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
 
@@ -47,6 +49,7 @@ export default function MedsScreen({ activePerson }) {
   const [weeklyDays, setWeeklyDays] = useState([]);
   const [reminderTimes, setReminderTimes] = useState([]);
   const [isActive, setIsActive] = useState(true);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterPerson, setFilterPerson] = useState('all');
   const [barcodeMeta, setBarcodeMeta] = useState(defaultBarcodeMeta);
@@ -109,6 +112,7 @@ export default function MedsScreen({ activePerson }) {
     setWeeklyDays([]);
     setReminderTimes([]);
     setIsActive(true);
+    setNotificationsEnabled(true);
     setBarcodeMeta(defaultBarcodeMeta);
   };
 
@@ -127,6 +131,7 @@ export default function MedsScreen({ activePerson }) {
       setWeeklyDays(Array.isArray(med.weeklyDays) ? med.weeklyDays.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) : []);
       setReminderTimes(med.reminderTimes || []);
       setIsActive(med.isActive !== false);
+      setNotificationsEnabled(med.notificationsEnabled !== false);
       setBarcodeMeta({
         gtin: med.gtin || '',
         serial: med.serial || '',
@@ -141,12 +146,12 @@ export default function MedsScreen({ activePerson }) {
 
   const handleSave = async () => {
     if (!name || !quantity) {
-      Alert.alert('Hata', 'Gerekli alanları doldurun.');
+      Alert.alert(t('error'), t('fillRequired'));
       return;
     }
 
     if (scheduleType === 'weekly' && weeklyDays.length === 0) {
-      Alert.alert('Hata', 'Haftalık plan için en az bir gun secmelisiniz.');
+      Alert.alert(t('error'), t('selectWeekDay'));
       return;
     }
 
@@ -168,6 +173,7 @@ export default function MedsScreen({ activePerson }) {
       scheduleType,
       weeklyDays: scheduleType === 'weekly' ? normalizedWeeklyDays : [],
       isActive,
+      notificationsEnabled,
       gtin: barcodeMeta?.gtin || '',
       serial: barcodeMeta?.serial || '',
       batch: barcodeMeta?.batch || '',
@@ -211,7 +217,7 @@ export default function MedsScreen({ activePerson }) {
       loadData();
     } catch (e) {
       console.error('Save med failed:', e);
-      Alert.alert('Hata', 'İşlem başarısız.');
+      Alert.alert(t('error'), t('opFailed'));
     }
   };
 
@@ -239,16 +245,16 @@ export default function MedsScreen({ activePerson }) {
         loadData();
       } catch (e) {
         console.error('Delete med failed:', e);
-        Alert.alert('Hata', 'İşlem yapılamadı.');
+        Alert.alert(t('error'), t('opNotDone'));
       }
     };
 
     if (Platform.OS === 'web') {
-      if (window.confirm('Bu ilacı dolaptan kaldırmak istiyor musunuz?')) performDelete();
+      if (window.confirm(t('removeMedConfirm'))) performDelete();
     } else {
-      Alert.alert('İlacı Sil', 'Bu ilacı dolaptan kaldırmak istiyor musunuz?', [
-        { text: 'Vazgeç', style: 'cancel' },
-        { text: 'Sil', style: 'destructive', onPress: performDelete },
+      Alert.alert(t('deleteMed'), t('removeMedConfirm'), [
+        { text: t('cancel'), style: 'cancel' },
+        { text: t('delete'), style: 'destructive', onPress: performDelete },
       ]);
     }
   };
@@ -303,7 +309,7 @@ export default function MedsScreen({ activePerson }) {
     const response = await requestCameraPermission();
     if (response?.granted) return true;
 
-    Alert.alert('Kamera İzni Gerekli', 'Karekod okutmak için kamera izni vermen gerekiyor.');
+    Alert.alert(t('cameraPermRequired'), t('cameraPermMsg'));
     return false;
   };
 
@@ -353,8 +359,8 @@ export default function MedsScreen({ activePerson }) {
       const catalogEntry = parsed?.gtin ? await getBarcodeCatalogEntry(parsed.gtin) : null;
       const lookup = catalogEntry || await searchBarcodeFromAPI(data);
 
-      if (!parsed && !lookup) {
-        Alert.alert('Hata', 'Karekod anlaşılamadı. Lütfen tekrar deneyin.');
+      if (!parsed) {
+        Alert.alert(t('error'), t('barcodeError'));
         return;
       }
 
@@ -365,7 +371,7 @@ export default function MedsScreen({ activePerson }) {
       if ((lookup?.expiryDate || parsed?.expiryDate || expiryDate)) filledFields.push('son kullanma tarihi');
     } catch (error) {
       console.error('Barcode scan failed:', error);
-      Alert.alert('Hata', 'Karekod işlendi ama bilgiler alınamadı.');
+        Alert.alert(t('error'), t('barcodeProcessedNoData'));
     }
   };
 
@@ -376,15 +382,12 @@ export default function MedsScreen({ activePerson }) {
       setCameraVisible(false);
 
       if (!photo?.uri) {
-        Alert.alert('Hata', 'Fotoğraf alınamadı.');
+        Alert.alert(t('error'), t('photoNotTaken'));
         return;
       }
 
       if (Constants.appOwnership === 'expo') {
-        Alert.alert(
-          'Development Build Gerekli',
-          'OCR özelliği Expo Go içinde çalışmaz. Bu özellik için development build ile açmanız gerekir.'
-        );
+        Alert.alert(t('devBuildRequired'), t('ocrExpoWarning'));
         return;
       }
 
@@ -392,18 +395,12 @@ export default function MedsScreen({ activePerson }) {
       try {
         ({ recognizeText } = await import('@infinitered/react-native-mlkit-text-recognition'));
       } catch (error) {
-        Alert.alert(
-          'Development Build Gerekli',
-          'OCR özelliği Expo Go içinde çalışmaz. Bu özellik için development build ile açmanız gerekir.'
-        );
+        Alert.alert(t('devBuildRequired'), t('ocrExpoWarning'));
         return;
       }
 
       if (typeof recognizeText !== 'function') {
-        Alert.alert(
-          'Development Build Gerekli',
-          'OCR özelliği Expo Go içinde çalışmaz. Bu özellik için development build ile açmanız gerekir.'
-        );
+        Alert.alert(t('devBuildRequired'), t('ocrExpoWarning'));
         return;
       }
 
@@ -411,7 +408,7 @@ export default function MedsScreen({ activePerson }) {
       const parsed = parseMedicineTextFromOCR(result?.text || '');
 
       if (!parsed) {
-        Alert.alert('Bilgi Bulunamadı', 'Kutudan anlamlı ilaç adı okunamadı. Işığı artırıp kutunun ön yüzünü tekrar çekin.');
+        Alert.alert(t('noInfoFoundTitle'), t('noInfoFoundDesc'));
         return;
       }
 
@@ -420,18 +417,18 @@ export default function MedsScreen({ activePerson }) {
       if (parsed.form === 'Şurup') handleTypeChange('Şurup');
 
       const fields = [];
-      if (parsed.name) fields.push('ilaç adı');
-      if (parsed.expiryDate) fields.push('son kullanma tarihi');
+      if (parsed.name) fields.push(t('medName').toLowerCase());
+      if (parsed.expiryDate) fields.push(t('expiryDate').toLowerCase());
 
       Alert.alert(
-        'OCR Tamamlandı',
+        t('ocrDone'),
         fields.length
-          ? `Kutudan şu alanlar okundu: ${fields.join(', ')}.`
-          : 'Metin okundu ancak alan doldurulamadı.'
+          ? `${t('ocrFields')} ${fields.join(', ')}.`
+          : t('ocrNoField')
       );
     } catch (error) {
       console.error('OCR failed:', error);
-      Alert.alert('Hata', 'OCR işlemi başarısız oldu.');
+      Alert.alert(t('error'), t('ocrFailed'));
     } finally {
       setOcrLoading(false);
     }
@@ -462,7 +459,7 @@ export default function MedsScreen({ activePerson }) {
     const completeUse = async (takerId, takerName) => {
       const success = await markAsTaken(med.id, takerId, consumeAmount, med.name, takerName);
       if (!success) {
-        Alert.alert('Hata', 'Kullanım kaydı eklenemedi.');
+            Alert.alert(t('error'), t('logAddError'));
         return;
       }
       await loadData();
@@ -471,18 +468,18 @@ export default function MedsScreen({ activePerson }) {
     if (med.personId === 'all') {
       const personOptions = persons.filter((p) => p.id !== 'all');
       if (personOptions.length === 0) {
-        Alert.alert('Hata', 'Kişi bulunamadı.');
+            Alert.alert(t('error'), t('errPersonNotFound'));
         return;
       }
 
       if (Platform.OS === 'web') {
         const personName = window.prompt(
-          `${med.name} kim tarafından kullanılıyor?\n\nKullanılabilir: ${personOptions.map((p) => p.name).join(', ')}`
+              `${med.name} ${t('whoUsesQuestion')}\n\n${t('available')}: ${personOptions.map((p) => p.name).join(', ')}`
         );
         if (!personName) return;
         const selectedPerson = personOptions.find((p) => p.name === personName);
         if (!selectedPerson) {
-          Alert.alert('Hata', 'Geçersiz kişi ismi.');
+              Alert.alert(t('error'), t('errInvalidPerson'));
           return;
         }
         await completeUse(selectedPerson.id, selectedPerson.name);
@@ -490,21 +487,21 @@ export default function MedsScreen({ activePerson }) {
       }
 
       Alert.alert(
-        `${med.name} - Kim kullandı?`,
-        'Lütfen kişi seçin:',
+            `${med.name} - ${t('whoUsedIt')}`,
+            t('whoTook'),
         [
           ...personOptions.map((person) => ({
             text: person.name,
             onPress: () => completeUse(person.id, person.name),
           })),
-          { text: 'İptal', style: 'cancel' },
+              { text: t('cancel'), style: 'cancel' },
         ]
       );
       return;
     }
 
     const takerId = med.personId || activePerson?.id;
-    const takerName = persons.find((p) => p.id === takerId)?.name || activePerson?.name || 'Bilinmeyen';
+        const takerName = persons.find((p) => p.id === takerId)?.name || activePerson?.name || t('unknown');
     await completeUse(takerId, takerName);
   };
 
@@ -516,7 +513,7 @@ export default function MedsScreen({ activePerson }) {
         </View>
         <TouchableOpacity style={styles.addBtn} onPress={() => openForm()}>
           <Plus color="#fff" size={20} />
-          <Text style={styles.addBtnText}>Ekle</Text>
+          <Text style={styles.addBtnText}>{t('add')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -524,7 +521,7 @@ export default function MedsScreen({ activePerson }) {
         <Search color="#9CA3AF" size={20} />
         <TextInput
           style={styles.searchInput}
-          placeholder="İlaç ismine göre ara..."
+          placeholder={t('searchByName')}
           value={searchTerm}
           onChangeText={setSearchTerm}
         />
@@ -534,7 +531,7 @@ export default function MedsScreen({ activePerson }) {
       <View style={styles.filterBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={{ paddingRight: 16, alignItems: 'center' }}>
           <TouchableOpacity style={[styles.chip, filterPerson === 'all' && styles.chipActive]} onPress={() => setFilterPerson('all')}>
-            <Text style={[styles.chipText, filterPerson === 'all' && styles.chipTextActive]}>Tüm Aile</Text>
+            <Text style={[styles.chipText, filterPerson === 'all' && styles.chipTextActive]}>{t('allFamily')}</Text>
           </TouchableOpacity>
           {persons.map(p => (
             <TouchableOpacity key={p.id} style={[styles.chip, filterPerson === p.id && styles.chipActive]} onPress={() => setFilterPerson(p.id)}>
@@ -577,19 +574,24 @@ export default function MedsScreen({ activePerson }) {
                 </View>
                 <View style={[styles.stateBadge, isPassive ? styles.stateBadgeOff : styles.stateBadgeOn]}>
                   <Text style={[styles.stateBadgeText, isPassive ? styles.stateBadgeTextOff : styles.stateBadgeTextOn]}>
-                    {isPassive ? 'Pasif' : 'Aktif'}
+                    {isPassive ? t('passive') : t('active')}
                   </Text>
                 </View>
               </View>
               <Text style={[styles.subText, isPassive && styles.passiveSubText]}>Kalan: {item.quantity} {item.unit} | Doz: {item.consumePerUsage}</Text>
               <Text style={[styles.ownerLine, isPassive && styles.passiveSubText]}>
-                Kisi: {item.personId === 'all' ? 'Ortak' : (persons.find(p => p.id === item.personId)?.name || 'Bilinmeyen')}
+                {t('person')} {item.personId === 'all' ? t('shared') : (persons.find(p => p.id === item.personId)?.name || t('unknown'))}
               </Text>
               <Text style={[styles.ownerLine, isPassive && styles.passiveSubText]}>{getScheduleText(item)}</Text>
 
               {Array.isArray(item.reminderTimes) && item.reminderTimes.filter(Boolean).length > 0 && (
                 <View style={styles.reminderRow}>
-                  {item.reminderTimes.filter(Boolean).map((t, idx) => (
+                  {item.notificationsEnabled === false
+                    ? <View style={[styles.timeTag, { backgroundColor: '#F3F4F6' }]}>
+                        <BellOff size={11} color="#9CA3AF" />
+                        <Text style={[styles.timeTagText, { color: '#9CA3AF' }]}>{t('notifOff')}</Text>
+                      </View>
+                    : item.reminderTimes.filter(Boolean).map((t, idx) => (
                     <View key={`${item.id}-time-${idx}`} style={styles.timeTag}>
                       <Clock size={11} color="#059669" />
                       <Text style={styles.timeTagText}>{t}</Text>
@@ -616,7 +618,7 @@ export default function MedsScreen({ activePerson }) {
         }}
         ListEmptyComponent={(
           <View style={styles.emptyBoxCompact}>
-            <Text style={styles.empty}>Seçili filtre için ilaç bulunamadı.</Text>
+            <Text style={styles.noMedFilter}>{t('noMedFilter')}</Text>
           </View>
         )}
         contentContainerStyle={{ padding: 12, paddingBottom: 22, flexGrow: 1 }}
@@ -625,7 +627,7 @@ export default function MedsScreen({ activePerson }) {
       <Modal visible={modalVisible} animationType="slide">
         <SafeAreaView style={styles.modal} edges={['top']}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{editingMed ? 'Düzenle' : 'Yeni İlaç'}</Text>
+            <Text style={styles.modalTitle}>{editingMed ? t('edit') : t('newMed')}</Text>
             <TouchableOpacity onPress={() => setModalVisible(false)}><X color="#000" size={24} /></TouchableOpacity>
           </View>
 
@@ -633,41 +635,41 @@ export default function MedsScreen({ activePerson }) {
             <View style={styles.scanActions}>
               <TouchableOpacity style={styles.scanBtn} onPress={openBarcodeScanner}>
                 <Scan color="#fff" size={20} />
-                <Text style={styles.scanBtnText}>Karekod Oku</Text>
+                <Text style={styles.scanBtnText}>{t('scanBarcode')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.scanBtn, styles.ocrBtn]} onPress={openOCRScanner}>
                 <ScanSearch color="#fff" size={20} />
-                <Text style={styles.scanBtnText}>Kutudan Oku</Text>
+                <Text style={styles.scanBtnText}>{t('scanBox')}</Text>
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.label}>İlaç Adı</Text>
+            <Text style={styles.label}>{t('medName')}</Text>
             <TextInput style={styles.input} value={name} onChangeText={setName} />
 
             <View style={styles.row}>
               <TouchableOpacity style={[styles.typeBtn, formType === 'Tablet' && styles.typeBtnActive]} onPress={() => handleTypeChange('Tablet')}>
-                <Text style={[styles.typeBtnText, formType === 'Tablet' && styles.typeBtnTextActive]}>Tablet</Text>
+                <Text style={[styles.typeBtnText, formType === 'Tablet' && styles.typeBtnTextActive]}>{t('tablet')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.typeBtn, formType === 'Şurup' && styles.typeBtnActive]} onPress={() => handleTypeChange('Şurup')}>
-                <Text style={[styles.typeBtnText, formType === 'Şurup' && styles.typeBtnTextActive]}>Şurup</Text>
+                <Text style={[styles.typeBtnText, formType === 'Şurup' && styles.typeBtnTextActive]}>{t('syrup')}</Text>
               </TouchableOpacity>
             </View>
 
             <View style={styles.row}>
               <View style={styles.halfField}>
-                <Text style={styles.label}>Stok</Text>
+                <Text style={styles.label}>{t('stockLabel')}</Text>
                 <TextInput style={styles.input} keyboardType="numeric" value={quantity} onChangeText={setQuantity} />
               </View>
               <View style={styles.halfField}>
-                <Text style={styles.label}>Birim</Text>
+                <Text style={styles.label}>{t('unit')}</Text>
                 <TextInput style={[styles.input, styles.readonlyInput]} editable={false} value={unit} />
               </View>
             </View>
 
-            <Text style={styles.label}>Kime Ait?</Text>
+            <Text style={styles.label}>{t('whoseIs')}</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
               <TouchableOpacity style={[styles.chip, personId === 'all' && styles.chipActive]} onPress={() => setPersonId('all')}>
-                <Text style={[styles.chipText, personId === 'all' && styles.chipTextActive]}>Ortak</Text>
+                <Text style={[styles.chipText, personId === 'all' && styles.chipTextActive]}>{t('shared')}</Text>
               </TouchableOpacity>
               {persons.map(p => (
                 <TouchableOpacity key={p.id} style={[styles.chip, personId === p.id && styles.chipActive]} onPress={() => setPersonId(p.id)}>
@@ -678,7 +680,7 @@ export default function MedsScreen({ activePerson }) {
 
             <View style={styles.row}>
               <View style={styles.halfField}>
-                <Text style={styles.label}>Kullanım Dozu</Text>
+                <Text style={styles.label}>{t('usageDose')}</Text>
                 <TextInput
                   style={styles.input}
                   keyboardType="decimal-pad"
@@ -688,7 +690,7 @@ export default function MedsScreen({ activePerson }) {
                 />
               </View>
               <View style={styles.halfField}>
-                <Text style={styles.label}>Günlük Kullanım Adedi</Text>
+                <Text style={styles.label}>{t('dailyUsageCount')}</Text>
                 <TextInput
                   style={styles.input}
                   keyboardType="numeric"
@@ -699,25 +701,25 @@ export default function MedsScreen({ activePerson }) {
               </View>
             </View>
 
-            <Text style={styles.label}>Plan Tipi</Text>
+            <Text style={styles.label}>{t('planType')}</Text>
             <View style={styles.row}>
               <TouchableOpacity
                 style={[styles.typeBtn, scheduleType === 'daily' && styles.typeBtnActive]}
                 onPress={() => setScheduleType('daily')}
               >
-                <Text style={[styles.typeBtnText, scheduleType === 'daily' && styles.typeBtnTextActive]}>Gunluk</Text>
+                <Text style={[styles.typeBtnText, scheduleType === 'daily' && styles.typeBtnTextActive]}>{t('daily')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.typeBtn, scheduleType === 'weekly' && styles.typeBtnActive]}
                 onPress={() => setScheduleType('weekly')}
               >
-                <Text style={[styles.typeBtnText, scheduleType === 'weekly' && styles.typeBtnTextActive]}>Haftalik</Text>
+                <Text style={[styles.typeBtnText, scheduleType === 'weekly' && styles.typeBtnTextActive]}>{t('weekly')}</Text>
               </TouchableOpacity>
             </View>
 
             {scheduleType === 'weekly' && (
               <View style={[styles.reminderBox, { marginTop: 2 }]}> 
-                <Text style={styles.label}>Kullanim Gunleri</Text>
+                <Text style={styles.label}>{t('usageDays')}</Text>
                 <View style={styles.timesWrap}>
                   {WEEK_DAY_OPTIONS.map((day) => {
                     const selected = weeklyDays.includes(day.value);
@@ -732,19 +734,19 @@ export default function MedsScreen({ activePerson }) {
                     );
                   })}
                 </View>
-                <Text style={styles.infoSmall}>Ornek: Sali ve Persembe secerek haftalik kullanim plani olusturabilirsiniz.</Text>
+                <Text style={styles.infoSmall}>{t('weeklyExample')}</Text>
               </View>
             )}
 
             <View style={styles.row}>
               <View style={styles.halfField}>
-                <Text style={styles.label}>SKT (GG.AA.YYYY)</Text>
+                <Text style={styles.label}>{t('sktFormat')}</Text>
                 <TextInput style={[styles.input, styles.compactInput]} placeholder="31.12.2026" value={expiryDate} onChangeText={setExpiryDate} />
               </View>
               <View style={styles.halfField}>
-                <Text style={styles.label}>Durum</Text>
+                <Text style={styles.label}>{t('status')}</Text>
                 <View style={styles.switchRow}>
-                  <Text style={styles.switchLabel}>{isActive ? 'Aktif' : 'Pasif'}</Text>
+                  <Text style={styles.switchLabel}>{isActive ? t('active') : t('passive')}</Text>
                   <Switch
                     value={isActive}
                     onValueChange={setIsActive}
@@ -757,7 +759,20 @@ export default function MedsScreen({ activePerson }) {
 
             {reminderTimes.length > 0 && (
               <View style={styles.reminderBox}>
-                <Text style={styles.label}><Bell size={14} color="#374151" /> Alarm Saatleri</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text style={styles.label}><Bell size={14} color="#374151" /> Alarm Saatleri</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ fontSize: 13, color: notificationsEnabled ? '#059669' : '#9CA3AF' }}>
+                      {notificationsEnabled ? t('notifOn') : t('notifOff')}
+                    </Text>
+                    <Switch
+                      value={notificationsEnabled}
+                      onValueChange={setNotificationsEnabled}
+                      trackColor={{ false: '#D1D5DB', true: '#86EFAC' }}
+                      thumbColor={notificationsEnabled ? '#059669' : '#9CA3AF'}
+                    />
+                  </View>
+                </View>
                 <View style={styles.timesWrap}>
                   {reminderTimes.map((time, index) => (
                     <TextInput
@@ -774,13 +789,13 @@ export default function MedsScreen({ activePerson }) {
                     />
                   ))}
                 </View>
-                <Text style={styles.infoSmall}>Format: 09:00, 14:30 vb.</Text>
+                <Text style={styles.infoSmall}>{t('timeFormat')}</Text>
               </View>
             )}
 
             <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
               <Check color="#fff" size={24} />
-              <Text style={styles.saveBtnText}>Kaydet</Text>
+              <Text style={styles.saveBtnText}>{t('save')}</Text>
             </TouchableOpacity>
           </ScrollView>
         </SafeAreaView>
@@ -791,13 +806,13 @@ export default function MedsScreen({ activePerson }) {
           {cameraPermission == null ? (
             <View style={styles.cameraFallback}>
               <ActivityIndicator color="#fff" />
-              <Text style={styles.cameraFallbackText}>Kamera hazırlanıyor...</Text>
+              <Text style={styles.cameraFallbackText}>{t('cameraLoading')}</Text>
             </View>
           ) : !cameraPermission.granted ? (
             <View style={styles.cameraFallback}>
-              <Text style={styles.cameraFallbackText}>Kamera izni verilmedi.</Text>
+              <Text style={styles.cameraFallbackText}>{t('cameraNotGranted')}</Text>
               <TouchableOpacity style={styles.captureBtn} onPress={ensureCameraPermission}>
-                <Text style={styles.captureBtnText}>İzni Tekrar İste</Text>
+                <Text style={styles.captureBtnText}>{t('requestPermAgain')}</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -806,7 +821,7 @@ export default function MedsScreen({ activePerson }) {
               style={StyleSheet.absoluteFill}
               facing="back"
               onMountError={() => {
-                Alert.alert('Hata', 'Kamera açılırken bir sorun oluştu.');
+                Alert.alert(t('error'), t('cameraOpenError'));
                 setCameraVisible(false);
               }}
               onBarcodeScanned={cameraMode === 'barcode' ? handleBarcodeScanned : undefined}
@@ -817,13 +832,13 @@ export default function MedsScreen({ activePerson }) {
             <View style={styles.scannerCutout} />
             {cameraMode === 'ocr' ? (
               <TouchableOpacity style={styles.captureBtn} onPress={takeOCRPhoto} disabled={ocrLoading}>
-                {ocrLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.captureBtnText}>Fotoğraf Çek</Text>}
+                {ocrLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.captureBtnText}>{t('capturePhoto')}</Text>}
               </TouchableOpacity>
             ) : (
-              <Text style={styles.overlayHint}>Karekod çerçeveye girince otomatik okunur</Text>
+              <Text style={styles.overlayHint}>{t('barcodeAutoReadHint')}</Text>
             )}
             <TouchableOpacity style={styles.closeScan} onPress={() => setCameraVisible(false)}>
-              <Text style={styles.closeScanText}>Vazgeç</Text>
+              <Text style={styles.closeScanText}>{t('cancel')}</Text>
             </TouchableOpacity>
           </View>
         </View>

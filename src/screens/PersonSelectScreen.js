@@ -4,11 +4,13 @@ import {
   TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Modal
 } from 'react-native';
 import { getPersons, addPerson, setActivePerson } from '../utils/storage';
+import { useTranslation } from '../i18n/LanguageContext';
 import { Users, ArrowRight, Plus, ShieldCheck, X } from 'lucide-react-native';
 
 const AVATARS = ['🧑', '👩', '👴', '👵', '👦', '👧', '🧒', '👨', '🧔', '🙋'];
 
 export default function PersonSelectScreen({ onPersonSelected }) {
+  const { t } = useTranslation();
   const [persons, setPersons] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -63,7 +65,7 @@ export default function PersonSelectScreen({ onPersonSelected }) {
   };
 
   const handleAddAndSelect = async () => {
-    if (!newName.trim()) { alert('Lütfen bir isim girin.'); return; }
+    if (!newName.trim()) { alert(t('pleaseEnterName')); return; }
     setSaving(true);
     await addPerson({ 
       name: newName.trim(), 
@@ -97,8 +99,8 @@ export default function PersonSelectScreen({ onPersonSelected }) {
           <View style={styles.iconCircle}>
             <Users color="#059669" size={40} />
           </View>
-          <Text style={styles.title}>Sen Kimsin?</Text>
-          <Text style={styles.subtitle}>Kişiselleştirilmiş görünüm için kendini seç</Text>
+          <Text style={styles.title}>{t('whoAreYou')}</Text>
+          <Text style={styles.subtitle}>{t('selectForPersonalized')}</Text>
         </View>
 
         {persons.length > 0 && (
@@ -116,7 +118,7 @@ export default function PersonSelectScreen({ onPersonSelected }) {
                 <View style={styles.cardInfo}>
                   <Text style={styles.personName}>{person.name}</Text>
                   {person.canSeeAll && (
-                    <Text style={styles.adminBadge}>👑 Yönetici Profili</Text>
+                    <Text style={styles.adminBadge}>{t('adminBadge')}</Text>
                   )}
                 </View>
                 <ArrowRight color="#059669" size={22} />
@@ -128,19 +130,19 @@ export default function PersonSelectScreen({ onPersonSelected }) {
         {!showAddForm ? (
           <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddForm(true)}>
             <Plus color="#059669" size={20} />
-            <Text style={styles.addBtnText}>Ben Yeniyim — Ekle</Text>
+            <Text style={styles.addBtnText}>{t('newMember')}</Text>
           </TouchableOpacity>
         ) : (
           <View style={styles.addForm}>
-            <Text style={styles.formTitle}>👋 Aramıza Hoş Geldin!</Text>
-            <Text style={styles.formLabel}>İsmin:</Text>
+            <Text style={styles.formTitle}>{t('welcomeNew')}</Text>
+            <Text style={styles.formLabel}>{t('yourName')}</Text>
             <TextInput
               style={styles.input}
-              placeholder="Örn: Elif, Emre..."
+              placeholder={t('namePlaceholder')}
               value={newName}
               onChangeText={setNewName}
             />
-            <Text style={styles.formLabel}>Avatar Seç:</Text>
+            <Text style={styles.formLabel}>{t('selectAvatar')}</Text>
             <View style={styles.avatarGrid}>
               {AVATARS.map(emoji => (
                 <TouchableOpacity
@@ -153,11 +155,11 @@ export default function PersonSelectScreen({ onPersonSelected }) {
               ))}
             </View>
             <TouchableOpacity style={styles.saveBtn} onPress={handleAddAndSelect} disabled={saving}>
-              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Kaydet & Giriş Yap</Text>}
+              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>{t('saveAndLogin')}</Text>}
             </TouchableOpacity>
             {persons.length > 0 && (
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setShowAddForm(false)}>
-                <Text style={styles.cancelBtnText}>İptal</Text>
+                <Text style={styles.cancelBtnText}>{t('cancel')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -171,13 +173,13 @@ export default function PersonSelectScreen({ onPersonSelected }) {
           <View style={styles.pinContent}>
             <View style={styles.modalHeader}>
               <ShieldCheck color="#D97706" size={32} />
-              <Text style={styles.modalTitle}>Güvenlik Kilidi</Text>
+              <Text style={styles.modalTitle}>{t('securityLock')}</Text>
               <TouchableOpacity style={styles.closeModal} onPress={() => setPinModalVisible(false)}>
                 <X color="#6B7280" size={24} />
               </TouchableOpacity>
             </View>
             
-            <Text style={styles.modalSub}>{targetPerson?.name} profiline girmek için şifreni yaz:</Text>
+            <Text style={styles.modalSub}>{targetPerson?.name} {t('enterPinFor')}</Text>
             
             <TextInput
               style={[styles.pinInput, pinError && styles.pinInputError]}
@@ -193,10 +195,10 @@ export default function PersonSelectScreen({ onPersonSelected }) {
               autoFocus
             />
             
-            {pinError && <Text style={styles.errorText}>Hatalı şifre. Lütfen tekrar dene.</Text>}
+            {pinError && <Text style={styles.errorText}>{t('wrongPin')}</Text>}
             
             <TouchableOpacity style={styles.confirmBtn} onPress={handlePinSubmit}>
-              <Text style={styles.confirmBtnText}>Giriş Yap</Text>
+              <Text style={styles.confirmBtnText}>{t('saveAndLogin')}</Text>
             </TouchableOpacity>
           </View>
         </View>

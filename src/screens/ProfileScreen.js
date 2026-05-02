@@ -9,8 +9,10 @@ import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllD
 import { db } from '../utils/firebase';
 import { collection, addDoc, getDocs, deleteDoc, doc, query } from 'firebase/firestore';
 import { LogOut, Pill, Clock, CheckCircle, Shield, Users, Check, Download, Upload } from 'lucide-react-native';
+import { useTranslation } from '../i18n/LanguageContext';
 
 export default function ProfileScreen({ activePerson, onPersonChange, onFullLogout }) {
+  const { t, language, setLanguage } = useTranslation();
   const [myMeds, setMyMeds] = useState([]);
   const [todayLogs, setTodayLogs] = useState([]);
   const [recentLogs, setRecentLogs] = useState([]);
@@ -83,11 +85,11 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       setLoading(true);
       const success = await markAsTaken(med.id, activePerson.id, parseFloat(med.consumePerUsage || 1), med.name, activePerson.name);
       if (success) {
-        Alert.alert("Başarılı ✅", `${med.name} içildi.`);
+        Alert.alert(t('success'), `${med.name} ${t('usedMed')}.`);
         await loadData();
       }
     } catch (err) {
-      Alert.alert("Hata", "İşlem başarısız.");
+      Alert.alert(t('error'), t('opFailed'));
     } finally {
       setLoading(false);
     }
@@ -97,10 +99,10 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     try {
       setLoading(true);
       const code = await getFamilyCode();
-      if (!code) { Alert.alert('Hata', 'Aile kodu bulunamadı.'); return; }
+      if (!code) { Alert.alert(t('error'), t('familyCodeNotFound')); return; }
 
       if (Constants.appOwnership === 'expo') {
-        Alert.alert('Development Build Gerekli', 'Dosya paylaşımı için development build ile açmanız gerekir.');
+        Alert.alert(t('devBuildRequired'), t('exportDevBuildMsg'));
         return;
       }
 
@@ -135,16 +137,16 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       const shareAsync = SharingMod?.shareAsync;
 
       if (typeof isAvailableAsync === 'function' && typeof shareAsync === 'function' && await isAvailableAsync()) {
-        await shareAsync(fileUri, { mimeType: 'application/json', dialogTitle: 'Yedeği Paylaş veya Kaydet' });
+        await shareAsync(fileUri, { mimeType: 'application/json', dialogTitle: t('backupShareDialogTitle') });
       } else {
-        Alert.alert('Dışa Aktarıldı', `Dosya kaydedildi:\n${fileUri}`);
+        Alert.alert(t('export'), `${t('exportedSaved')}\n${fileUri}`);
       }
     } catch (e) {
       const msg = String(e?.message || e || '');
       if (/ExpoSharing|native module/i.test(msg)) {
-        Alert.alert('Paylaşım Kullanılamıyor', 'Bu cihaz/oturumda dosya paylaşımı desteklenmiyor. Lütfen development build kullanın veya farklı bir cihazda deneyin.');
+        Alert.alert(t('sharingUnavailable'), t('sharingUnavailableMsg'));
       } else {
-        Alert.alert('Hata', 'Dışa aktarma başarısız.');
+        Alert.alert(t('error'), t('exportFailed'));
       }
     } finally {
       setLoading(false);
@@ -154,13 +156,13 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
   const handleImport = async () => {
     try {
       if (Constants.appOwnership === 'expo') {
-        Alert.alert('Development Build Gerekli', 'İçe aktarma için development build ile açmanız gerekir.');
+        Alert.alert(t('devBuildRequired'), t('importDevBuildMsg'));
         return;
       }
 
       let DocumentPicker;
       try { DocumentPicker = await import('expo-document-picker'); } catch {
-        Alert.alert('Hata', 'Dosya seçici bu ortamda kullanılamıyor.');
+        Alert.alert(t('error'), t('filePickerUnavailable'));
         return;
       }
 
@@ -168,23 +170,23 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       if (result.canceled) return;
 
       const fileUri = result.assets?.[0]?.uri;
-      if (!fileUri) { Alert.alert('Hata', 'Dosya seçilemedi.'); return; }
+      if (!fileUri) { Alert.alert(t('error'), t('fileNotSelected')); return; }
 
       const json = await FileSystem.readAsStringAsync(fileUri, { encoding: 'utf8' });
       const backup = JSON.parse(json);
 
       if (!backup?.version || !backup?.meds || !backup?.persons) {
-        Alert.alert('Hata', 'Geçersiz yedek dosyası.');
+        Alert.alert(t('error'), t('invalidBackup'));
         return;
       }
 
       await new Promise((resolve, reject) => {
         Alert.alert(
-          'Veri İçe Aktar',
+          t('importConfirmTitle'),
           `${backup.meds.length} ilaç, ${backup.persons.length} kişi ve ${backup.logs?.length || 0} geçmiş kaydı içe aktarılacak.\n\nMEVCUT VERİLER SİLİNECEK. Devam edilsin mi?`,
           [
-            { text: 'Vazgeç', style: 'cancel', onPress: () => reject('cancelled') },
-            { text: 'İçe Aktar', style: 'destructive', onPress: resolve },
+            { text: t('cancel'), style: 'cancel', onPress: () => reject('cancelled') },
+            { text: t('import'), style: 'destructive', onPress: resolve },
           ]
         );
       }).catch(() => { return Promise.reject('cancelled'); });
@@ -213,11 +215,11 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
         });
       }
 
-      Alert.alert('Başarılı', 'Veriler içe aktarıldı.');
+      Alert.alert(t('success'), t('importSuccess'));
       await loadData();
     } catch (e) {
       if (e === 'cancelled') return;
-      Alert.alert('Hata', 'İçe aktarma başarısız: ' + String(e?.message || e));
+      Alert.alert(t('error'), `${t('importFailed')} ${String(e?.message || e)}`);
     } finally {
       setLoading(false);
     }
@@ -239,6 +241,29 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     return `${m}dk`;
   };
 
+  const formatLogDateTime = (log) => {
+    const datePart = String(log?.date || '').trim();
+    const timePart = String(log?.time || '').trim();
+    if (datePart && timePart) return `${datePart} ${timePart}`;
+    if (datePart) return datePart;
+    if (timePart) return timePart;
+
+    const rawTs = log?.timestamp;
+    const ts = typeof rawTs === 'number'
+      ? rawTs
+      : (rawTs && typeof rawTs.seconds === 'number' ? rawTs.seconds * 1000 : null);
+
+    if (!ts) return '-';
+    const locale = language === 'en' ? 'en-GB' : 'tr-TR';
+    return new Date(ts).toLocaleString(locale, {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
   const handleSnoozeWindowChange = async (key, delta) => {
     const current = key === 'before' ? snoozeBeforeMinutes : snoozeAfterMinutes;
     const next = Math.max(0, Math.min(24 * 60, current + delta));
@@ -256,29 +281,29 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     if (!activePerson?.canSeeAll) return;
 
     if (newFamilyPassword.trim().length < 4) {
-      Alert.alert('Hata', 'Yeni aile sifresi en az 4 karakter olmali.');
+      Alert.alert(t('error'), t('errPasswordShort2'));
       return;
     }
 
     if (newFamilyPassword !== newFamilyPasswordAgain) {
-      Alert.alert('Hata', 'Yeni sifreler birbiriyle ayni degil.');
+      Alert.alert(t('error'), t('errPasswordMismatch'));
       return;
     }
 
     const result = await changeFamilyPassword(currentFamilyPassword, newFamilyPassword);
     if (!result?.ok) {
       if (result?.reason === 'wrong-password') {
-        Alert.alert('Hata', 'Mevcut aile sifresi hatali.');
+        Alert.alert(t('error'), t('errCurrentPasswordWrong'));
         return;
       }
-      Alert.alert('Hata', 'Aile sifresi guncellenemedi.');
+      Alert.alert(t('error'), t('errPasswordUpdateFailed'));
       return;
     }
 
     setCurrentFamilyPassword('');
     setNewFamilyPassword('');
     setNewFamilyPasswordAgain('');
-    Alert.alert('Basarili', 'Aile sifresi guncellendi.');
+    Alert.alert(t('success'), t('passwordUpdated'));
   };
 
   if (loading) return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
@@ -290,7 +315,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
         <View style={styles.avatar}><Text style={styles.avatarText}>{activePerson.avatar || '🧑'}</Text></View>
         <View style={{flex:1}}>
           <Text style={styles.name}>{activePerson.name}</Text>
-          <Text style={styles.role}>{activePerson.canSeeAll ? '👑 Yönetici' : '👤 Üye'}</Text>
+          <Text style={styles.role}>{activePerson.canSeeAll ? `👑 ${t('admin')}` : `👤 ${t('member')}`}</Text>
         </View>
         <TouchableOpacity style={styles.logoutIcon} onPress={() => onPersonChange()}>
            <Users color="#059669" size={20} />
@@ -298,26 +323,26 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       </View>
 
       {/* İlaçlarım */}
-      <Text style={styles.sectionTitle}>💊 Aktif İlaçlarım</Text>
+      <Text style={styles.sectionTitle}>{t('myActiveMeds')}</Text>
       {myMeds.map(med => (
         <View key={med.id} style={styles.miniCard}>
           <Text style={styles.medName}>{med.name}</Text>
           <TouchableOpacity style={styles.miniBtn} onPress={() => handleTakeMed(med)}>
             <Check color="#fff" size={16} />
-            <Text style={styles.miniBtnText}>Kullan</Text>
+            <Text style={styles.miniBtnText}>{t('use')}</Text>
           </TouchableOpacity>
         </View>
       ))}
 
       {/* Son Hareketler */}
-      <Text style={styles.sectionTitle}>🕒 Son Hareketlerim</Text>
+      <Text style={styles.sectionTitle}>{t('recentActivity')}</Text>
       <View style={styles.logBox}>
         {recentLogs.map(log => (
           <View key={log.id} style={styles.logItem}>
-             <Text style={styles.logTime}>{log.time}</Text>
+             <Text style={styles.logTime}>{formatLogDateTime(log)}</Text>
              <View style={{flex:1}}>
-                <Text style={styles.logText}>{log.medName || 'İlaç'} kullanıldı</Text>
-                <Text style={styles.logTaker}>Kullanan: {getLogTakerName(log)}</Text>
+                <Text style={styles.logText}>{log.medName || t('unknown')} {t('usedMed')}</Text>
+                <Text style={styles.logTaker}>{t('usedBy')} {getLogTakerName(log)}</Text>
              </View>
           </View>
         ))}
@@ -325,12 +350,12 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
 
       {activePerson?.canSeeAll && (
         <>
-          <Text style={styles.sectionTitle}>🔐 Aile Sifresi</Text>
+          <Text style={styles.sectionTitle}>{t('familyPasswordTitle')}</Text>
           <View style={styles.backupBox}>
-            <Text style={styles.backupDesc}>Aileye giris sifresini sadece yonetici guncelleyebilir.</Text>
+            <Text style={styles.backupDesc}>{t('familyPasswordDesc')}</Text>
             <TextInput
               style={styles.passwordInput}
-              placeholder="Mevcut aile sifresi"
+              placeholder={t('currentPassword')}
               value={currentFamilyPassword}
               onChangeText={setCurrentFamilyPassword}
               secureTextEntry
@@ -338,7 +363,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
             />
             <TextInput
               style={styles.passwordInput}
-              placeholder="Yeni aile sifresi"
+              placeholder={t('newPassword')}
               value={newFamilyPassword}
               onChangeText={setNewFamilyPassword}
               secureTextEntry
@@ -346,7 +371,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
             />
             <TextInput
               style={styles.passwordInput}
-              placeholder="Yeni sifre tekrar"
+              placeholder={t('newPasswordAgain')}
               value={newFamilyPasswordAgain}
               onChangeText={setNewFamilyPasswordAgain}
               secureTextEntry
@@ -354,13 +379,13 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
             />
             <TouchableOpacity style={styles.exportBtn} onPress={handleFamilyPasswordUpdate}>
               <Shield color="#fff" size={16} />
-              <Text style={styles.backupBtnText}>Sifreyi Guncelle</Text>
+              <Text style={styles.backupBtnText}>{t('updatePassword')}</Text>
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.sectionTitle}>🕛 Gün Dönümü Saati</Text>
+          <Text style={styles.sectionTitle}>{t('dayRollover')}</Text>
           <View style={styles.rolloverBox}>
-            <Text style={styles.rolloverText}>Kaçırılan doz hesapları bu saate göre gün değiştirir.</Text>
+            <Text style={styles.rolloverText}>{t('dayRolloverDesc')}</Text>
             <View style={styles.rolloverControls}>
               <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleRolloverChange(-1)}>
                 <Text style={styles.rolloverBtnText}>-1s</Text>
@@ -370,19 +395,19 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
                 <Text style={styles.rolloverBtnText}>+1s</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.rolloverHint}>Varsayılan: 00:00 | Örnek: 03:00</Text>
+            <Text style={styles.rolloverHint}>{t('dayRolloverDefault')}</Text>
           </View>
         </>
       )}
 
       {activePerson?.canSeeAll && (
         <>
-          <Text style={styles.sectionTitle}>⏰ Alarm Erteleme Penceresi</Text>
+          <Text style={styles.sectionTitle}>{t('snoozeWindow')}</Text>
           <View style={styles.rolloverBox}>
-            <Text style={styles.rolloverText}>Ertele butonu, ilaç saati yaklaşınca görünür. Süre aşıldığında doz kaçırılmış listesine düşer.</Text>
+            <Text style={styles.rolloverText}>{t('snoozeWindowDesc')}</Text>
 
             <View style={styles.windowRow}>
-              <Text style={styles.windowLabel}>İlaç saatinden önce</Text>
+              <Text style={styles.windowLabel}>{t('beforeDoseTime')}</Text>
               <View style={styles.rolloverControls}>
                 <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleSnoozeWindowChange('before', -30)}>
                   <Text style={styles.rolloverBtnText}>-30dk</Text>
@@ -395,7 +420,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
             </View>
 
             <View style={styles.windowRow}>
-              <Text style={styles.windowLabel}>İlaç saatinden sonra</Text>
+              <Text style={styles.windowLabel}>{t('afterDoseTime')}</Text>
               <View style={styles.rolloverControls}>
                 <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleSnoozeWindowChange('after', -30)}>
                   <Text style={styles.rolloverBtnText}>-30dk</Text>
@@ -407,24 +432,24 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
               </View>
             </View>
 
-            <Text style={styles.rolloverHint}>Örnek: Önce 1s / Sonra 2s</Text>
+            <Text style={styles.rolloverHint}>{t('snoozeWindowExample')}</Text>
           </View>
         </>
       )}
 
       {activePerson?.canSeeAll && (
         <>
-          <Text style={styles.sectionTitle}>💾 Veri Yedekleme</Text>
+          <Text style={styles.sectionTitle}>{t('backupTitle')}</Text>
           <View style={styles.backupBox}>
-            <Text style={styles.backupDesc}>Tüm ilaç, kişi ve geçmiş verilerini JSON dosyası olarak dışa aktarın veya önceki bir yedeği geri yükleyin.</Text>
+            <Text style={styles.backupDesc}>{t('backupDesc')}</Text>
             <View style={styles.backupBtns}>
               <TouchableOpacity style={styles.exportBtn} onPress={handleExport}>
                 <Download color="#fff" size={16} />
-                <Text style={styles.backupBtnText}>Dışa Aktar</Text>
+                <Text style={styles.backupBtnText}>{t('export')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.importBtn} onPress={handleImport}>
                 <Upload color="#fff" size={16} />
-                <Text style={styles.backupBtnText}>İçe Aktar</Text>
+                <Text style={styles.backupBtnText}>{t('import')}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -433,8 +458,27 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
 
       <TouchableOpacity style={styles.fullLogout} onPress={() => onFullLogout()}>
         <LogOut color="#EF4444" size={20} />
-        <Text style={styles.logoutText}>Sistemden Çıkış Yap</Text>
+        <Text style={styles.logoutText}>{t('logout')}</Text>
       </TouchableOpacity>
+
+      {/* Dil Seçici */}
+      <View style={[styles.backupBox, { marginTop: 16, marginBottom: 8 }]}>
+        <Text style={[styles.sectionTitle, { marginTop: 0, marginBottom: 12 }]}>{t('language')}</Text>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity
+            style={[styles.exportBtn, language !== 'tr' && { backgroundColor: '#D1D5DB' }]}
+            onPress={() => setLanguage('tr')}
+          >
+            <Text style={styles.backupBtnText}>{t('languageTR')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.exportBtn, language !== 'en' && { backgroundColor: '#D1D5DB' }]}
+            onPress={() => setLanguage('en')}
+          >
+            <Text style={styles.backupBtnText}>{t('languageEN')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     </ScrollView>
   );
 }

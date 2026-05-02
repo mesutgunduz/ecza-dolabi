@@ -15,6 +15,7 @@ import PersonSelectScreen from './src/screens/PersonSelectScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ReorderScreen from './src/screens/ReorderScreen';
 import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, getMeds, clearActivePerson, clearAllData, markAsTaken, createFamily, loginToFamily, getNotificationTargetPersonIds } from './src/utils/storage.js';
+import { LanguageProvider, useTranslation } from './src/i18n/LanguageContext';
 import {
   requestNotificationPermissions,
   configureNotificationCategories,
@@ -62,22 +63,23 @@ function SwipeableTabScreen({ routeNames, screenName, children }) {
 }
 
 function MainTabs({ activePerson, onPersonChange, onFullLogout, dataRefreshKey, onNotificationTargetsChange }) {
+  const { t } = useTranslation();
   const routeNames = useMemo(() => (
     activePerson.canSeeAll
-      ? ['Ana Ekran', 'Kişiler', 'İlaçlar', 'Alınacaklar', 'Geçmiş', 'Profilim']
-      : ['Ana Ekran', 'Geçmiş', 'Profilim']
+      ? ['dashboard', 'persons', 'meds', 'reorder', 'logs', 'profile']
+      : ['dashboard', 'logs', 'profile']
   ), [activePerson.canSeeAll]);
 
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         tabBarIcon: ({ color, size }) => {
-          if (route.name === 'Ana Ekran') return <Home color={color} size={size} />;
-          if (route.name === 'Kişiler') return <Users color={color} size={size} />;
-          if (route.name === 'İlaçlar') return <Pill color={color} size={size} />;
-          if (route.name === 'Alınacaklar') return <ShoppingCart color={color} size={size} />;
-          if (route.name === 'Geçmiş') return <Clock color={color} size={size} />;
-          if (route.name === 'Profilim') return <UserCircle color={color} size={size} />;
+          if (route.name === 'dashboard') return <Home color={color} size={size} />;
+          if (route.name === 'persons') return <Users color={color} size={size} />;
+          if (route.name === 'meds') return <Pill color={color} size={size} />;
+          if (route.name === 'reorder') return <ShoppingCart color={color} size={size} />;
+          if (route.name === 'logs') return <Clock color={color} size={size} />;
+          if (route.name === 'profile') return <UserCircle color={color} size={size} />;
           return null;
         },
         tabBarActiveTintColor: '#059669',
@@ -86,9 +88,9 @@ function MainTabs({ activePerson, onPersonChange, onFullLogout, dataRefreshKey, 
         headerTitleStyle: { color: '#111827', fontWeight: 'bold' },
       })}
     >
-      <Tab.Screen name="Ana Ekran">
+      <Tab.Screen name="dashboard" options={{ title: t('homeTab'), tabBarLabel: t('homeTab') }}>
         {() => (
-          <SwipeableTabScreen routeNames={routeNames} screenName="Ana Ekran">
+          <SwipeableTabScreen routeNames={routeNames} screenName="dashboard">
             <DashboardScreen activePerson={activePerson} dataRefreshKey={dataRefreshKey} />
           </SwipeableTabScreen>
         )}
@@ -96,23 +98,23 @@ function MainTabs({ activePerson, onPersonChange, onFullLogout, dataRefreshKey, 
 
       {activePerson.canSeeAll && (
         <>
-          <Tab.Screen name="Kişiler">
+          <Tab.Screen name="persons" options={{ title: t('personsTab'), tabBarLabel: t('personsTab') }}>
             {() => (
-              <SwipeableTabScreen routeNames={routeNames} screenName="Kişiler">
+              <SwipeableTabScreen routeNames={routeNames} screenName="persons">
                 <PersonsScreen activePerson={activePerson} onNotificationTargetsChange={onNotificationTargetsChange} />
               </SwipeableTabScreen>
             )}
           </Tab.Screen>
-          <Tab.Screen name="İlaçlar" options={{ headerShown: false }}>
+          <Tab.Screen name="meds" options={{ headerShown: false, title: t('medsTab'), tabBarLabel: t('medsTab') }}>
             {() => (
-              <SwipeableTabScreen routeNames={routeNames} screenName="İlaçlar">
+              <SwipeableTabScreen routeNames={routeNames} screenName="meds">
                 <MedsScreen activePerson={activePerson} />
               </SwipeableTabScreen>
             )}
           </Tab.Screen>
-          <Tab.Screen name="Alınacaklar">
+          <Tab.Screen name="reorder" options={{ title: t('reorderTab'), tabBarLabel: t('reorderTab') }}>
             {() => (
-              <SwipeableTabScreen routeNames={routeNames} screenName="Alınacaklar">
+              <SwipeableTabScreen routeNames={routeNames} screenName="reorder">
                 <ReorderScreen />
               </SwipeableTabScreen>
             )}
@@ -120,17 +122,17 @@ function MainTabs({ activePerson, onPersonChange, onFullLogout, dataRefreshKey, 
         </>
       )}
 
-      <Tab.Screen name="Geçmiş">
+      <Tab.Screen name="logs" options={{ title: t('logsTab'), tabBarLabel: t('logsTab') }}>
         {() => (
-          <SwipeableTabScreen routeNames={routeNames} screenName="Geçmiş">
+          <SwipeableTabScreen routeNames={routeNames} screenName="logs">
             <LogsScreen activePerson={activePerson} dataRefreshKey={dataRefreshKey} />
           </SwipeableTabScreen>
         )}
       </Tab.Screen>
 
-      <Tab.Screen name="Profilim" options={{ tabBarLabel: activePerson?.name || 'Profilim' }}>
+      <Tab.Screen name="profile" options={{ title: t('profileTab'), tabBarLabel: activePerson?.name || t('profileTab') }}>
         {() => (
-          <SwipeableTabScreen routeNames={routeNames} screenName="Profilim">
+          <SwipeableTabScreen routeNames={routeNames} screenName="profile">
             <ProfileScreen
               activePerson={activePerson}
               onPersonChange={onPersonChange}
@@ -323,18 +325,41 @@ export default function App() {
   }
 
   return (
+    <LanguageProvider>
+      <AppContent
+        isAuthenticated={isAuthenticated}
+        activePerson={activePerson}
+        dataRefreshKey={dataRefreshKey}
+        onAuth={handleAuth}
+        onPersonSelected={handlePersonSelected}
+        onPersonChange={handlePersonChange}
+        onFullLogout={handleFullLogout}
+        onNotificationTargetsChange={handleNotificationTargetsChange}
+      />
+    </LanguageProvider>
+  );
+}
+
+function AppContent({ isAuthenticated, activePerson, dataRefreshKey, onAuth, onPersonSelected, onPersonChange, onFullLogout, onNotificationTargetsChange }) {
+  const { loadLanguage } = useTranslation();
+
+  useEffect(() => {
+    loadLanguage();
+  }, [loadLanguage]);
+
+  return (
     <NavigationContainer>
       {!isAuthenticated ? (
-        <LoginScreen onAuth={handleAuth} />
+        <LoginScreen onAuth={onAuth} />
       ) : !activePerson ? (
-        <PersonSelectScreen onPersonSelected={handlePersonSelected} />
+        <PersonSelectScreen onPersonSelected={onPersonSelected} />
       ) : (
         <MainTabs
           activePerson={activePerson}
-          onPersonChange={handlePersonChange}
-          onFullLogout={handleFullLogout}
+          onPersonChange={onPersonChange}
+          onFullLogout={onFullLogout}
           dataRefreshKey={dataRefreshKey}
-          onNotificationTargetsChange={handleNotificationTargetsChange}
+          onNotificationTargetsChange={onNotificationTargetsChange}
         />
       )}
     </NavigationContainer>

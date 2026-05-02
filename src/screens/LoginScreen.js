@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { ShieldCheck, Cloud } from 'lucide-react-native';
+import { useTranslation } from '../i18n/LanguageContext';
 
 export default function LoginScreen({ onAuth }) {
+  const { t } = useTranslation();
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [adminPin, setAdminPin] = useState('');
@@ -11,12 +13,12 @@ export default function LoginScreen({ onAuth }) {
 
   const handleSubmit = async () => {
     if (code.trim().length < 4) {
-      Alert.alert('Hata', 'Aile kodunuz en az 4 karakter olmalıdır.');
+      Alert.alert(t('error'), t('errCodeShort'));
       return;
     }
 
     if (password.trim().length < 4) {
-      Alert.alert('Hata', 'Aile şifresi en az 4 karakter olmalıdır.');
+      Alert.alert(t('error'), t('errPasswordShort'));
       return;
     }
 
@@ -30,39 +32,39 @@ export default function LoginScreen({ onAuth }) {
     if (result?.ok) return;
 
     if (result?.reason === 'code-exists') {
-      Alert.alert('Bu kod kullaniliyor', 'Bu aile kodu zaten var. Lutfen baska bir kod secin.');
+      Alert.alert(t('error'), t('errCodeExists'));
       return;
     }
 
     if (result?.reason === 'wrong-password') {
-      Alert.alert('Hatali sifre', 'Kod size aitse sifrenizle giris yapin.');
+      Alert.alert(t('error'), t('errWrongPassword'));
       return;
     }
 
     if (result?.reason === 'not-found') {
-      Alert.alert('Aile bulunamadi', 'Bu kodla bir aile bulunamadi. Yeni aile olusturabilirsiniz.');
+      Alert.alert(t('error'), t('errNotFound'));
       return;
     }
 
     if (result?.reason === 'admin-pin-required') {
       setShowAdminPin(true);
-      Alert.alert('Yonetici PIN gerekli', 'Bu ailede ilk sifre atamasi icin yonetici PIN girilmelidir.');
+      Alert.alert(t('error'), t('errAdminPinRequired'));
       return;
     }
 
     if (result?.reason === 'admin-pin-invalid') {
       setShowAdminPin(true);
-      Alert.alert('Hatali PIN', 'Yonetici PIN dogrulanamadi.');
+      Alert.alert(t('error'), t('errAdminPinInvalid'));
       return;
     }
 
     if (result?.reason === 'admin-pin-not-configured') {
       setShowAdminPin(true);
-      Alert.alert('Yonetici PIN yok', 'Bu eski ailede yonetici PIN tanimli degil. Once ailede oturum acik bir cihazdan yonetici PIN belirleyin.');
+      Alert.alert(t('error'), t('errAdminPinNotConfigured'));
       return;
     }
 
-    Alert.alert('Hata', 'Islem tamamlanamadi. Lutfen tekrar deneyin.');
+    Alert.alert(t('error'), t('errGeneric'));
   };
 
   return (
@@ -71,29 +73,25 @@ export default function LoginScreen({ onAuth }) {
         <Cloud color="#059669" size={80} />
       </View>
 
-      <Text style={styles.title}>Ecza Dolabım</Text>
-      <Text style={styles.subtitle}>Bulut Senkronizasyonu Aktif</Text>
+      <Text style={styles.title}>{t('loginTitle')}</Text>
+      <Text style={styles.subtitle}>{t('loginSubtitle')}</Text>
 
       <View style={styles.card}>
-        <Text style={styles.label}>Aile Bağlantı Kodu:</Text>
-        <Text style={styles.desc}>Yeni aile olusturabilir veya mevcut aile kodu ve sifresiyle giris yapabilirsiniz.</Text>
+        <Text style={styles.label}>{t('familyCode')}</Text>
+        <Text style={styles.desc}>{t('familyCodeDesc')}</Text>
 
         <View style={styles.modeRow}>
           <TouchableOpacity
             style={[styles.modeBtn, mode === 'create' && styles.modeBtnActive]}
-            onPress={() => {
-              setMode('create');
-              setShowAdminPin(false);
-              setAdminPin('');
-            }}
+            onPress={() => { setMode('create'); setShowAdminPin(false); setAdminPin(''); }}
           >
-            <Text style={[styles.modeText, mode === 'create' && styles.modeTextActive]}>Yeni Aile</Text>
+            <Text style={[styles.modeText, mode === 'create' && styles.modeTextActive]}>{t('newFamily')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.modeBtn, mode === 'join' && styles.modeBtnActive]}
             onPress={() => setMode('join')}
           >
-            <Text style={[styles.modeText, mode === 'join' && styles.modeTextActive]}>Giris Yap</Text>
+            <Text style={[styles.modeText, mode === 'join' && styles.modeTextActive]}>{t('loginBtn')}</Text>
           </TouchableOpacity>
         </View>
 
@@ -107,7 +105,7 @@ export default function LoginScreen({ onAuth }) {
 
         <TextInput
           style={[styles.input, { letterSpacing: 0 }]}
-          placeholder="Aile Sifresi"
+          placeholder={t('familyPassword')}
           value={password}
           onChangeText={setPassword}
           secureTextEntry
@@ -118,19 +116,19 @@ export default function LoginScreen({ onAuth }) {
           <>
             <TextInput
               style={[styles.input, { letterSpacing: 3 }]}
-              placeholder="Yonetici PIN (eski aile icin)"
+              placeholder={t('adminPin')}
               value={adminPin}
               onChangeText={(val) => setAdminPin(val.replace(/[^0-9]/g, '').slice(0, 6))}
               keyboardType="numeric"
               secureTextEntry
             />
-            <Text style={styles.pinHint}>Bu alan sadece eski ailelerde ilk sifre atamasi icin gerekir.</Text>
+            <Text style={styles.pinHint}>{t('adminPinHint')}</Text>
           </>
         )}
 
         <TouchableOpacity style={styles.btn} onPress={handleSubmit}>
           <ShieldCheck color="#fff" size={20} />
-          <Text style={styles.btnText}>{mode === 'create' ? 'Yeni Aile Olustur' : 'Dolaba Giris Yap'}</Text>
+          <Text style={styles.btnText}>{mode === 'create' ? t('createFamily') : t('loginFamily')}</Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>

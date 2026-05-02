@@ -6,10 +6,12 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { getMeds, getReorderCartItems, saveReorderCartItems, clearReorderCartItems } from '../utils/storage';
 import { AlertCircle, ShoppingCart, Plus, Trash2, Check } from 'lucide-react-native';
+import { useTranslation } from '../i18n/LanguageContext';
 
 const REORDER_THRESHOLD = 5;
 
 export default function ReorderScreen() {
+  const { t } = useTranslation();
   const [meds, setMeds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [reorderList, setReorderList] = useState([]);
@@ -57,14 +59,14 @@ export default function ReorderScreen() {
 
   const handleClearCart = () => {
     if (Platform.OS === 'web') {
-      if (window.confirm('Tüm liste temizlensin mi?')) {
+      if (window.confirm(t('clearListConfirm'))) {
         setCart([]);
         clearReorderCartItems();
       }
     } else {
-      Alert.alert('Listeyi Temizle', 'Tüm alışveriş listesi silinsin mi?', [
-        { text: 'Vazgeç', style: 'cancel' },
-        { text: 'Temizle', style: 'destructive', onPress: () => {
+      Alert.alert(t('shoppingList'), t('clearListConfirm'), [
+        { text: t('cancel'), style: 'cancel' },
+        { text: t('clearList'), style: 'destructive', onPress: () => {
           setCart([]);
           clearReorderCartItems();
         } },
@@ -83,25 +85,24 @@ export default function ReorderScreen() {
     <View style={styles.container}>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 20 }}>
 
-        {/* Sepetim */}
         <View style={styles.cartPanel}>
           <View style={styles.cartHeader}>
             <ShoppingCart color="#059669" size={18} />
-            <Text style={styles.cartTitle}>Alışveriş Listem</Text>
+            <Text style={styles.cartTitle}>{t('shoppingList')}</Text>
             {cart.length > 0 && (
               <TouchableOpacity onPress={handleClearCart} style={styles.clearBtn}>
-                <Text style={styles.clearBtnText}>Temizle</Text>
+                <Text style={styles.clearBtnText}>{t('clearList')}</Text>
               </TouchableOpacity>
             )}
           </View>
           {cart.length === 0 ? (
-            <Text style={styles.cartEmpty}>Henüz ilaç eklemediniz. Aşağıdan ekleyin.</Text>
+            <Text style={styles.cartEmpty}>{t('emptyCart')}</Text>
           ) : (
             cart.map(item => (
               <View key={item.id} style={styles.cartItem}>
                 <Check color="#059669" size={14} />
                 <Text style={styles.cartItemName}>{item.name}</Text>
-                <Text style={styles.cartItemMeta}>Kalan: {item.quantity} {item.unit}</Text>
+                <Text style={styles.cartItemMeta}>{t('remaining')}: {item.quantity} {item.unit}</Text>
                 <TouchableOpacity onPress={() => handleRemoveFromCart(item.id)} style={styles.cartRemoveBtn}>
                   <Trash2 color="#EF4444" size={14} />
                 </TouchableOpacity>
@@ -110,13 +111,12 @@ export default function ReorderScreen() {
           )}
         </View>
 
-        {/* Tükenmiş Uyarısı */}
         {outOfStock.length > 0 && (
           <View style={styles.alertPanel}>
             <AlertCircle color="#fff" size={20} />
             <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.alertTitle}>TÜKENMİŞ İLAÇLAR</Text>
-              <Text style={styles.alertCount}>{outOfStock.length} ilaç sıfırda</Text>
+              <Text style={styles.alertTitle}>{t('outOfStock')}</Text>
+              <Text style={styles.alertCount}>{outOfStock.length} {t('outOfStockCount')}</Text>
             </View>
           </View>
         )}
@@ -124,8 +124,8 @@ export default function ReorderScreen() {
         {reorderList.length > 0 ? (
           <>
             <View style={styles.headerSection}>
-              <Text style={styles.sectionTitle}>YENİLENMESİ GEREKEN İLAÇLAR</Text>
-              <Text style={styles.sectionSubtitle}>{reorderList.length} ilaç (5 birimden az)</Text>
+              <Text style={styles.sectionTitle}>{t('needsReorder')}</Text>
+              <Text style={styles.sectionSubtitle}>{reorderList.length} {t('lowStockCount')}</Text>
             </View>
             {reorderList.map(item => {
               const inCart = cart.find(c => c.id === item.id);
@@ -135,7 +135,7 @@ export default function ReorderScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.medName}>{item.name}</Text>
                       <Text style={styles.medMeta}>{item.form || 'Tablet'} • {item.unit}</Text>
-                      <Text style={styles.mediStok}>Kalan Stok: {item.quantity} {item.unit}</Text>
+                      <Text style={styles.mediStok}>{t('remainingStock')} {item.quantity} {item.unit}</Text>
                       {item.expiryDate && <Text style={styles.expiryText}>SKT: {item.expiryDate}</Text>}
                     </View>
                     <View style={styles.qtyBox}>
@@ -148,7 +148,7 @@ export default function ReorderScreen() {
                     onPress={() => inCart ? handleRemoveFromCart(item.id) : handleAddToCart(item)}
                   >
                     {inCart ? <Check color="#fff" size={16} /> : <Plus color="#fff" size={16} />}
-                    <Text style={styles.addBtnText}>{inCart ? 'Listede ✓' : 'Listeye Ekle'}</Text>
+                    <Text style={styles.addBtnText}>{inCart ? t('inList') : t('addToList')}</Text>
                   </TouchableOpacity>
                 </View>
               );
@@ -157,8 +157,8 @@ export default function ReorderScreen() {
         ) : reorderList.length === 0 && outOfStock.length === 0 ? (
           <View style={styles.emptyBox}>
             <ShoppingCart color="#059669" size={64} />
-            <Text style={styles.emptyTitle}>Tüm ilaçlar yeterli miktarda</Text>
-            <Text style={styles.emptyText}>Stok 5 birimin altına düşünce burada görüntülenecek.</Text>
+            <Text style={styles.emptyTitle}>{t('allStocksOk')}</Text>
+            <Text style={styles.emptyText}>{t('stockWillAppear')}</Text>
           </View>
         ) : null}
 

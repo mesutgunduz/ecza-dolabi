@@ -180,6 +180,7 @@ export const rebuildRemindersForPerson = async ({ meds, activePerson, persons = 
   for (const person of targets) {
     for (const med of meds) {
       if (!isMedRelevantForPerson(med, person)) continue;
+      if (med.notificationsEnabled === false) continue;
       if (!Array.isArray(med.reminderTimes) || med.reminderTimes.length === 0) continue;
       await scheduleMedReminders(med, person);
       scheduledCount += 1;

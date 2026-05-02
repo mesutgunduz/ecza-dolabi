@@ -11,8 +11,10 @@ import { scheduleReminderSnooze } from '../utils/notifications';
 import { 
   Check, AlertCircle, Pill, Clock, Search
 } from 'lucide-react-native';
+import { useTranslation } from '../i18n/LanguageContext';
 
 export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
+  const { t } = useTranslation();
   const [meds, setMeds] = useState([]);
   const [persons, setPersons] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -205,16 +207,16 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
          await editMed(medId, { isActive: false });
          await loadData();
        } catch(e) { 
-         Alert.alert("Hata", "İşlem başarısız."); 
+           Alert.alert(t('error'), t('opFailed')); 
          setLoading(false); 
        }
     };
     if (Platform.OS === 'web') {
-      if (window.confirm("Bu ilacı imha etmek istiyor musunuz?")) pDelete();
+      if (window.confirm(t('removeMedConfirm'))) pDelete();
     } else {
-      Alert.alert("İlacı Sil", "Bu ilacı dolaptan kaldırmak istiyor musunuz?", [
-        { text: "Vazgeç", style: "cancel" },
-        { text: "Sil", style: "destructive", onPress: pDelete }
+      Alert.alert(t('deleteMed'), t('removeMedConfirm'), [
+        { text: t('cancel'), style: 'cancel' },
+        { text: t('delete'), style: 'destructive', onPress: pDelete }
       ]);
     }
   };
@@ -226,31 +228,31 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         const personOptions = persons.filter(p => p.id !== 'all');
         
         if (personOptions.length === 0) {
-          Alert.alert("Hata", "Kişi bulunamadı.");
+          Alert.alert(t('error'), t('errPersonNotFound'));
           return;
         }
 
         if (Platform.OS === 'web') {
           const personName = window.prompt(
-            `${med.name} kimin tarafından kullanılıyor?\n\nKullanılabilir: ${personOptions.map(p => p.name).join(', ')}`
+            `${med.name} ${t('whoUsesQuestion')}\n\n${t('available')}: ${personOptions.map(p => p.name).join(', ')}`
           );
           if (!personName) return;
           const selectedPerson = personOptions.find(p => p.name === personName);
           if (selectedPerson) {
             await processTakeMed(med, selectedPerson.id, selectedPerson.name);
           } else {
-            Alert.alert("Hata", "Geçersiz kişi ismi.");
+            Alert.alert(t('error'), t('errInvalidPerson'));
           }
         } else {
           Alert.alert(
-            `${med.name} - Kimin kullandığı?`,
-            "Lütfen seçin:",
+            `${med.name} - ${t('whoTookTitle')}`,
+            t('whoTook'),
             [
               ...personOptions.map(person => ({
                 text: person.name,
                 onPress: () => processTakeMed(med, person.id, person.name)
               })),
-              { text: "İptal", style: "cancel" }
+              { text: t('cancel'), style: 'cancel' }
             ]
           );
         }
@@ -259,11 +261,11 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
 
       const takerId = med.personId || activePerson.id;
       const takerObj = persons.find(p => p.id === takerId) || activePerson;
-      const takerName = takerObj.name || 'Bilinmeyen';
+      const takerName = takerObj.name || t('unknown');
       
       await processTakeMed(med, takerId, takerName);
     } catch (err) {
-      Alert.alert("Hata", "Bir sorun oluştu: " + err.message);
+      Alert.alert(t('error'), `${t('errGenericOp')} ${err.message}`);
     }
   };
 
@@ -324,7 +326,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         if (success) {
           await loadData();
         } else {
-          Alert.alert("Hata", "İşlem kaydedilemedi.");
+          Alert.alert(t('error'), t('errSaveFailed'));
           await loadData();
         }
       };
@@ -334,18 +336,18 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
 
       if (med.dailyDose && currentCount >= med.dailyDose) {
         if (Platform.OS === 'web') {
-          if (window.confirm("Günlük doz sınırına ulaştınız. Yine de devam edilsin mi?")) proceed();
+          if (window.confirm(t('doseLimitConfirm'))) proceed();
         } else {
-          Alert.alert("Doz Sınırı!", "Sınıra ulaştınız. Yine de devam edilsin mi?", [
-            { text: "Vazgeç", style: "cancel" },
-            { text: "Evet", onPress: proceed }
+          Alert.alert(t('doseLimitReached'), t('doseLimitConfirm'), [
+            { text: t('cancel'), style: 'cancel' },
+            { text: t('yes'), onPress: proceed }
           ]);
         }
       } else {
         await proceed();
       }
     } catch (err) {
-      Alert.alert("Hata", "Bir sorun oluştu: " + err.message);
+      Alert.alert(t('error'), `${t('errGenericOp')} ${err.message}`);
     }
   };
 
@@ -362,16 +364,16 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         ? result.triggerDate.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
         : null;
       Alert.alert(
-        'Alarm Ertelendi',
+        t('alarmSnoozed'),
         formatted
-          ? `${med.name} için hatırlatma ${formatted} saatine ertelendi.`
-          : `${med.name} için hatırlatma ${minutes} dakika sonrasına ertelendi.`
+          ? `${med.name} ${t('alarmSnoozedAt')} ${formatted}.`
+          : `${med.name} ${minutes} ${t('alarmSnoozedMin')}`
       );
     } catch (err) {
       if (err?.message === 'NOTIFICATION_PERMISSION_DENIED') {
-        Alert.alert('İzin Gerekli', 'Alarm ertelemek için bildirim izni gerekli.');
+        Alert.alert(t('permRequired'), t('notifPermForSnooze'));
       } else {
-        Alert.alert('Hata', 'Alarm ertelenemedi.');
+        Alert.alert(t('error'), t('opFailed'));
       }
     }
   };
@@ -384,8 +386,8 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         
         {/* Hoşgeldin Paneli */}
         <View style={styles.welcomeBox}>
-          <Text style={styles.welcomeTitle}>Merhaba, {activePerson?.name} 👋</Text>
-          <Text style={styles.welcomeSub}>Aktif ilaç listesi:</Text>
+          <Text style={styles.welcomeTitle}>{t('hello')}, {activePerson?.name} 👋</Text>
+          <Text style={styles.welcomeSub}>{t('activeMeds')}</Text>
         </View>
 
         {/* Arama Çubuğu */}
@@ -393,7 +395,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
           <Search color="#9CA3AF" size={20} />
           <TextInput 
             style={styles.searchInput} 
-            placeholder="İlaç ara..." 
+            placeholder={t('searchMed')} 
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
@@ -403,7 +405,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         {missedDoseItems.length > 0 && (
           <View style={styles.missedSummaryBox}>
             <AlertCircle color="#B45309" size={14} />
-            <Text style={styles.missedSummaryText}>Bugün kaçırılan doz: {missedDoseItems.reduce((sum, item) => sum + item.missed, 0)}</Text>
+            <Text style={styles.missedSummaryText}>{t('missedDose')} {missedDoseItems.reduce((sum, item) => sum + item.missed, 0)}</Text>
           </View>
         )}
 
@@ -412,7 +414,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
           <View style={styles.alertPanel}>
             <View style={styles.alertHeader}>
               <AlertCircle color="#fff" size={20} />
-              <Text style={styles.alertTitle}>SKT'Sİ GEÇEN İLAÇLAR VAR!</Text>
+              <Text style={styles.alertTitle}>{t('expiredMedsAlert')}</Text>
             </View>
             {expiredMeds.map(med => (
               <View key={med.id} style={styles.alertItem}>
@@ -432,7 +434,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
                style={[styles.chip, filterPerson === 'all' && styles.chipActive]} 
                onPress={() => setFilterPerson('all')}
              >
-               <Text style={[styles.chipText, filterPerson === 'all' && {color: '#fff'}]}>Tüm Aile</Text>
+               <Text style={[styles.chipText, filterPerson === 'all' && {color: '#fff'}]}>{t('allFamily')}</Text>
              </TouchableOpacity>
              {persons.map(p => (
                <TouchableOpacity 
@@ -448,7 +450,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
 
         {/* İlaç Kartları */}
         {filteredMeds.length === 0 ? (
-          <View style={styles.emptyBox}><Text style={styles.emptyText}>Bu kişi için ilaç bulunamadı.</Text></View>
+          <View style={styles.emptyBox}><Text style={styles.emptyText}>{t('noMedFound')}</Text></View>
         ) : filteredMeds.map(med => {
           const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
           const count = medUsageCounts[`${med.id}-${takerId}`] || 0;
@@ -484,14 +486,13 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
                     <View style={[styles.badge, {backgroundColor: med.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5'}]}>
                       <Text style={[styles.badgeText, {color: med.form === 'Şurup' ? '#DB2777' : '#059669'}]}>{med.form || 'Tablet'}</Text>
                     </View>
-                    {/* Sahibi Göster (özellikle genel aramada faydalı) */}
-                    {med.personId && (
+                  {med.personId && (
                       <Text style={styles.ownerText}>
-                        • {med.personId === 'all' ? 'Ortak' : (persons.find(p => p.id === med.personId)?.name || 'Bilinmeyen')}
+                        • {med.personId === 'all' ? t('shared') : (persons.find(p => p.id === med.personId)?.name || t('unknown'))}
                       </Text>
                     )}
                   </View>
-                  <Text style={styles.medSub}>Stok: {med.quantity} {med.unit} | Bugün: {count}/{med.dailyDose || '-'}</Text>
+                  <Text style={styles.medSub}>{t('stock')} {med.quantity} {med.unit} | {t('today')} {count}/{med.dailyDose || '-'}</Text>
                   
                   {/* Alarm Saatleri */}
                   {reminderTimes.length > 0 && (
@@ -507,27 +508,27 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
 
                   {!isScheduledToday && (
                     <View style={styles.notPlannedTag}>
-                      <Text style={styles.notPlannedTagText}>Bugun kullanilmayacak</Text>
+                      <Text style={styles.notPlannedTagText}>{t('notScheduledToday')}</Text>
                     </View>
                   )}
                 </View>
               </View>
               <View style={styles.medBottom}>
-                <Text style={styles.infoText}>{med.consumePerUsage} {med.unit} kullanılacak</Text>
+                <Text style={styles.infoText}>{med.consumePerUsage} {med.unit} {t('willUse')}</Text>
                 <View style={styles.actionRow}>
                   {canSnoozeNow && (
                     <TouchableOpacity
                       style={styles.snoozeBtn}
                       onPress={() =>
-                        Alert.alert('Alarm Ertele', `${med.name} için alarm ne kadar ertelensin?`, [
-                          { text: 'Vazgeç', style: 'cancel' },
-                          { text: '10 dk', onPress: () => handleSnoozeMed(med, 10) },
-                          { text: '30 dk', onPress: () => handleSnoozeMed(med, 30) },
+                        Alert.alert(t('snoozeAlarm'), `${med.name} ${t('snoozeFor')}?`, [
+                          { text: t('cancel'), style: 'cancel' },
+                          { text: t('alarm10'), onPress: () => handleSnoozeMed(med, 10) },
+                          { text: t('alarm30'), onPress: () => handleSnoozeMed(med, 30) },
                         ])
                       }
                     >
                       <Clock color="#B45309" size={16} />
-                      <Text style={styles.snoozeBtnText}>Ertele</Text>
+                      <Text style={styles.snoozeBtnText}>{t('snooze')}</Text>
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity 
@@ -536,7 +537,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
                      disabled={isLimitReached}
                   >
                     <Check color="#fff" size={18} />
-                    <Text style={styles.btnText}>{isLimitReached ? 'Doz Doldu' : 'Kullan'}</Text>
+                    <Text style={styles.btnText}>{isLimitReached ? t('doseFull') : t('use')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>

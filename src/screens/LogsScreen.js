@@ -7,8 +7,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getLogs, getMeds, getPersons, deleteLog, editLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText, Edit2 } from 'lucide-react-native';
+import { useTranslation } from '../i18n/LanguageContext';
 
 export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
+  const { t } = useTranslation();
   const [logs, setLogs] = useState([]);
   const [persons, setPersons] = useState([]);
   const [meds, setMeds] = useState([]);
@@ -151,8 +153,8 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       if (missed <= 0) return acc;
 
       const ownerName = targetIds.length === 1
-        ? (persons.find((p) => p.id === targetIds[0])?.name || 'Bilinmeyen')
-        : 'Ortak';
+        ? (persons.find((p) => p.id === targetIds[0])?.name || t('unknown'))
+        : t('shared');
 
       acc.push({
         id: med.id,
@@ -167,7 +169,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
 
       return acc;
     }, []);
-  }, [logs, meds, persons, activePerson, rolloverMinutes, logicalTodayKey, snoozeAfterMinutes, notificationTargetIds]);
+  }, [logs, meds, persons, activePerson, rolloverMinutes, logicalTodayKey, snoozeAfterMinutes, notificationTargetIds, t]);
 
   const getPersonDisplayName = (log) => {
     if (log.takerName) return log.takerName;
@@ -175,16 +177,16 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
     const p = persons.find(x => x.id === log.personId);
     if (p) return p.name;
 
-    if (log.personId === 'all' || !log.personId) return 'Ortak';
+    if (log.personId === 'all' || !log.personId) return t('shared');
 
-    return `Silinmiş Kullanıcı (ID: ${log.personId ? log.personId.substring(0, 6) : '?'})`;
+    return `${t('deletedUser')} (ID: ${log.personId ? log.personId.substring(0, 6) : '?'})`;
   };
 
   const handleDelete = (id) => {
-    Alert.alert('Kaydı Sil', 'Bu geçmiş kaydını silmek istiyor musunuz?', [
-      { text: 'Vazgeç', style: 'cancel' },
+    Alert.alert(t('deleteLog'), t('deleteLogConfirm'), [
+      { text: t('cancel'), style: 'cancel' },
       {
-        text: 'Sil',
+          text: t('delete'),
         style: 'destructive',
         onPress: async () => {
           await deleteLog(id);
@@ -203,13 +205,13 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
   const handleSaveEditedTime = async () => {
     const newTime = String(editTimeInput || '').trim();
     if (!newTime || !newTime.match(/^\d{2}:\d{2}$/)) {
-      Alert.alert('Hata', 'HH:MM formatında girin (örn: 14:30)');
+      Alert.alert(t('error'), t('timeFormatError'));
       return;
     }
 
     const [hours, minutes] = newTime.split(':').map(Number);
     if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
-      Alert.alert('Hata', 'Geçerli bir saat girin');
+      Alert.alert(t('error'), t('timeInvalidError'));
       return;
     }
 
@@ -221,21 +223,21 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       setEditingLog(null);
       setEditTimeInput('');
       await loadData();
-      Alert.alert('Başarılı', 'Saat güncellendi');
+      Alert.alert(t('success'), t('timeUpdated'));
     } catch (err) {
-      Alert.alert('Hata', 'Saat güncellenemedi');
+      Alert.alert(t('error'), t('timeUpdateError'));
     }
   };
 
   const handleShare = async (log) => {
     const personName = getPersonDisplayName(log);
-    const message = `💊 ${personName}, ${log.medName || 'İlaç'} ilacından ${log.dosage || 1} birim kullandı.\n📅 Tarih: ${log.date}\n⏰ Saat: ${log.time}`;
+    const message = `💊 ${personName}, ${log.medName || t('medicineFallback')} ${t('sharedUsedMedicineMessage')} ${log.dosage || 1}.\n📅 ${t('dateLabel')}: ${log.date}\n⏰ ${t('timeLabel')}: ${log.time}`;
     const url = `whatsapp://send?text=${encodeURIComponent(message)}`;
 
     try {
       await Linking.openURL(url);
     } catch (error) {
-      Alert.alert('Hata', 'WhatsApp uygulaması bulunamadı veya açılamıyor. Yüklü olduğundan emin olun.');
+      Alert.alert(t('error'), t('whatsappError'));
     }
   };
 
@@ -251,11 +253,11 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       );
 
       if (!success) {
-        Alert.alert('Hata', 'Kullanım kaydı eklenemedi.');
+        Alert.alert(t('error'), t('logAddError'));
       }
       await loadData();
     } catch (error) {
-      Alert.alert('Hata', 'Kullanım kaydı eklenemedi.');
+      Alert.alert(t('error'), t('logAddError'));
       setLoading(false);
     }
   };
@@ -308,7 +310,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
         if (statsPersonFilter !== 'all' && takerId !== statsPersonFilter) continue;
         if (activePerson && !activePerson.canSeeAll && takerId !== activePerson.id) continue;
 
-        const ownerName = persons.find((p) => p.id === takerId)?.name || 'Bilinmeyen';
+        const ownerName = persons.find((p) => p.id === takerId)?.name || t('unknown');
         results.push({
           id: `${med.id}-${takerId}`,
           name: med.name,
@@ -351,14 +353,14 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
     }
 
     return results.sort((a, b) => (a.week.rate ?? 100) - (b.week.rate ?? 100));
-  }, [meds, logs, persons, activePerson, rolloverMinutes, statsPersonFilter]);
+  }, [meds, logs, persons, activePerson, rolloverMinutes, statsPersonFilter, t]);
 
   const groupedStatsData = useMemo(() => {
     const order = persons.map((p) => p.name || '').filter(Boolean);
     const groupedMap = new Map();
 
     for (const item of statsData) {
-      const key = item.ownerName || 'Bilinmeyen';
+      const key = item.ownerName || t('unknown');
       if (!groupedMap.has(key)) groupedMap.set(key, []);
       groupedMap.get(key).push(item);
     }
@@ -392,15 +394,15 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       if (ib === -1) return -1;
       return ia - ib;
     });
-  }, [statsData, persons]);
+  }, [statsData, persons, t]);
 
   const statsPersonOptions = useMemo(() => {
     if (!activePerson?.canSeeAll) return [];
     const selectable = persons
       .filter((p) => p.id && p.id !== 'all')
-      .map((p) => ({ id: p.id, name: p.name || 'Bilinmeyen' }));
-    return [{ id: 'all', name: 'Tüm Kişi' }, ...selectable];
-  }, [persons, activePerson]);
+      .map((p) => ({ id: p.id, name: p.name || t('unknown') }));
+    return [{ id: 'all', name: t('allPersons') }, ...selectable];
+  }, [persons, activePerson, t]);
 
   if (loading) return <View style={styles.center}><ActivityIndicator color="#059669" /></View>;
 
@@ -412,14 +414,14 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
           onPress={() => setActiveTab('history')}
         >
           <ScrollText color={activeTab === 'history' ? '#059669' : '#6B7280'} size={15} />
-          <Text style={[styles.tabBtnText, activeTab === 'history' && styles.tabBtnTextActive]}>Geçmiş</Text>
+          <Text style={[styles.tabBtnText, activeTab === 'history' && styles.tabBtnTextActive]}>{t('logs')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tabBtn, activeTab === 'stats' && styles.tabBtnActive]}
           onPress={() => setActiveTab('stats')}
         >
           <BarChart2 color={activeTab === 'stats' ? '#059669' : '#6B7280'} size={15} />
-          <Text style={[styles.tabBtnText, activeTab === 'stats' && styles.tabBtnTextActive]}>İstatistik</Text>
+          <Text style={[styles.tabBtnText, activeTab === 'stats' && styles.tabBtnTextActive]}>{t('stats')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -448,26 +450,26 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
             </ScrollView>
           )}
           {groupedStatsData.length === 0 ? (
-            <Text style={styles.empty}>İstatistik için yeterli veri yok.</Text>
+            <Text style={styles.empty}>{t('noStats')}</Text>
           ) : groupedStatsData.map((group) => (
             <View key={group.ownerName} style={styles.personStatsGroup}>
               <Text style={styles.personStatsTitle}>{group.ownerName}</Text>
               <View style={styles.personSummaryCard}>
                 <View style={styles.personSummaryBlock}>
-                  <Text style={styles.personSummaryLabel}>Son 7 Gün</Text>
+                  <Text style={styles.personSummaryLabel}>{t('rate7')}</Text>
                   <Text style={styles.personSummaryRate}>{group.summary.weekRate != null ? `%${group.summary.weekRate}` : '-'}</Text>
-                  <Text style={styles.personSummaryDetail}>{group.summary.weekTaken}/{group.summary.weekPlanned} doz</Text>
+                  <Text style={styles.personSummaryDetail}>{group.summary.weekTaken}/{group.summary.weekPlanned}</Text>
                 </View>
                 <View style={styles.personSummaryDivider} />
                 <View style={styles.personSummaryBlock}>
-                  <Text style={styles.personSummaryLabel}>Son 30 Gün</Text>
+                  <Text style={styles.personSummaryLabel}>{t('rate30')}</Text>
                   <Text style={styles.personSummaryRate}>{group.summary.monthRate != null ? `%${group.summary.monthRate}` : '-'}</Text>
-                  <Text style={styles.personSummaryDetail}>{group.summary.monthTaken}/{group.summary.monthPlanned} doz</Text>
+                  <Text style={styles.personSummaryDetail}>{group.summary.monthTaken}/{group.summary.monthPlanned}</Text>
                 </View>
               </View>
               {group.items.map(item => {
             const getRateColor = (r) => r == null ? '#9CA3AF' : r >= 80 ? '#059669' : r >= 50 ? '#D97706' : '#EF4444';
-            const getRateLabel = (r) => r == null ? 'Veri yok' : r >= 80 ? 'İyi' : r >= 50 ? 'Orta' : 'Düşük';
+            const getRateLabel = (r) => r == null ? t('rateNoData') : r >= 80 ? t('rateGood') : r >= 50 ? t('rateMedium') : t('rateLow');
             return (
               <View key={item.id} style={styles.statCard}>
                 <View style={styles.statHeader}>
@@ -476,7 +478,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
                 </View>
                 <View style={styles.statRow}>
                   <View style={styles.statBlock}>
-                    <Text style={styles.statPeriod}>Son 7 Gün</Text>
+                    <Text style={styles.statPeriod}>{t('rate7')}</Text>
                     <Text style={[styles.statRate, { color: getRateColor(item.week.rate) }]}>
                       {item.week.rate != null ? `%${item.week.rate}` : '-'}
                     </Text>
@@ -488,7 +490,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
                   </View>
                   <View style={styles.statDivider} />
                   <View style={styles.statBlock}>
-                    <Text style={styles.statPeriod}>Son 30 Gün</Text>
+                    <Text style={styles.statPeriod}>{t('rate30')}</Text>
                     <Text style={[styles.statRate, { color: getRateColor(item.month.rate) }]}>
                       {item.month.rate != null ? `%${item.month.rate}` : '-'}
                     </Text>
@@ -534,7 +536,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
               <Clock color="#059669" size={20} />
             </View>
             <View style={styles.content}>
-              <Text style={styles.medName}>{item.medName || 'İlaç'}</Text>
+              <Text style={styles.medName}>{item.medName || t('medicineFallback')}</Text>
               <Text style={styles.dateText}>{item.date} - {item.time}</Text>
               <View style={styles.tagRow}>
                 <View style={styles.tag}>
