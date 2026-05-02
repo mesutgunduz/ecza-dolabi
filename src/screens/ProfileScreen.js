@@ -24,6 +24,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     active: 0,
     passive: 0,
     sharedTotal: 0,
+    takenLast24h: 0,
   });
   const [persons, setPersons] = useState([]);
   const [rolloverTime, setRolloverTime] = useState('00:00');
@@ -70,12 +71,20 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
         const activeCount = allMeds.filter((m) => m.isActive !== false).length;
         const passiveCount = Math.max(0, total - activeCount);
         const sharedTotal = allMeds.filter((m) => m.personId === 'all').length;
+        const nowTs = Date.now();
+        const takenLast24h = allLogs.reduce((sum, log) => {
+          const ts = getLogTimestamp(log);
+          if (!ts || ts < nowTs - (24 * 60 * 60 * 1000) || ts > nowTs) return sum;
+          const dosage = parseFloat(log?.dosage);
+          return sum + (Number.isFinite(dosage) && dosage > 0 ? dosage : 1);
+        }, 0);
 
         setCabinetSummary({
           total,
           active: activeCount,
           passive: passiveCount,
           sharedTotal,
+          takenLast24h,
         });
 
         const summary = allPersons
@@ -94,7 +103,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
           });
         setFamilySummary(summary);
       } else {
-        setCabinetSummary({ total: 0, active: 0, passive: 0, sharedTotal: 0 });
+        setCabinetSummary({ total: 0, active: 0, passive: 0, sharedTotal: 0, takenLast24h: 0 });
         setFamilySummary([]);
       }
     } catch (err) {
@@ -392,6 +401,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
             </View>
 
             <Text style={styles.summarySubLine}>{t('sharedMedsCount')}: {cabinetSummary.sharedTotal}</Text>
+            <Text style={styles.summarySubLine}>{t('takenLast24h')}: {cabinetSummary.takenLast24h}</Text>
 
             <Text style={styles.summaryListTitle}>{t('personMedsBreakdown')}</Text>
             {familySummary.length > 0 ? familySummary.map((item) => (
