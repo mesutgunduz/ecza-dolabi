@@ -6,11 +6,13 @@ import {
 import { useFocusEffect, useRoute } from '@react-navigation/native';
 import { getLogs, getMeds, getPersons, deleteLog, editLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
-import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText, Edit2 } from 'lucide-react-native';
+import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText, Edit2, FileDown } from 'lucide-react-native';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { useTranslation } from '../i18n/LanguageContext';
 
 export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const route = useRoute();
   const listRef = useRef(null);
   const [logs, setLogs] = useState([]);
@@ -20,6 +22,8 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
   const [rolloverTime, setRolloverTime] = useState('00:00');
   const [activeTab, setActiveTab] = useState('history'); // 'history' | 'stats'
   const [statsPersonFilter, setStatsPersonFilter] = useState('all');
+  const [reportRangeType, setReportRangeType] = useState('week');
+  const [reportOffset, setReportOffset] = useState(0);
   const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
   const [notificationTargetIds, setNotificationTargetIds] = useState([]);
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -96,6 +100,10 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       setStatsPersonFilter(activePerson.id);
     }
   }, [activePerson]);
+
+  useEffect(() => {
+    setReportOffset(0);
+  }, [reportRangeType, statsPersonFilter]);
 
   useEffect(() => {
     if (!route.params?.focusMissedDosesKey) return;
@@ -408,6 +416,143 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
     });
   }, [statsData, persons, t]);
 
+  const reportPeriodDays = useMemo(() => {
+    const periodLength = reportRangeType === 'week' ? 7 : 30;
+    const logicalBaseDate = new Date();
+    if ((logicalBaseDate.getHours() * 60 + logicalBaseDate.getMinutes()) < rolloverMinutes) {
+      logicalBaseDate.setDate(logicalBaseDate.getDate() - 1);
+    }
+    logicalBaseDate.setHours(12, 0, 0, 0);
+
+    const endDate = new Date(logicalBaseDate);
+    endDate.setDate(logicalBaseDate.getDate() - (reportOffset * periodLength));
+
+    const locale = language === 'en' ? 'en-GB' : 'tr-TR';
+    const days = [];
+    for (let index = 0; index < periodLength; index += 1) {
+      const dayDate = new Date(endDate);
+      dayDate.setDate(endDate.getDate() - index);
+      days.push({
+        date: dayDate,
+        dateKey: getLogicalDateKeyForNow(dayDate, rolloverMinutes),
+        label: dayDate.toLocaleDateString(locale, {
+          weekday: 'short',
+          day: '2-digit',
+          month: '2-digit',
+        }),
+        fullLabel: dayDate.toLocaleDateString(locale, {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        }),
+      });
+    }
+    return days;
+  }, [reportRangeType, reportOffset, rolloverMinutes, language]);
+
+  const personalUsageReports = useMemo(() => {
+    const personIds = statsPersonFilter !== 'all'
+      ? [statsPersonFilter]
+      : (activePerson?.canSeeAll
+        ? persons.filter((p) => p.id && p.id !== 'all').map((p) => p.id)
+        : [activePerson?.id].filter(Boolean));
+
+    return personIds.map((personId) => {
+      const person = persons.find((p) => p.id === personId);
+      const ownerName = person?.name || t('unknown');
+
+      const dailyRows = reportPeriodDays.map((day) => {
+        const dayLogs = logs
+          .filter((log) => log.personId === personId && getLogicalDateKeyForLog(log, rolloverMinutes) === day.dateKey)
+          .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+
+        const planned = meds.reduce((sum, med) => {
+          const plannedDose = parseInt(med.dailyDose, 10);
+          if (!plannedDose || plannedDose <= 0) return sum;
+
+          const isDirect = med.personId === personId;
+          const isShared = med.personId === 'all';
+          if (!isDirect && !isShared) return sum;
+
+          if (med.scheduleType === 'weekly') {
+            const selectedDays = Array.isArray(med.weeklyDays)
+              ? med.weeklyDays.map((value) => Number(value)).filter((value) => value >= 0 && value <= 6)
+              : [];
+            if (!selectedDays.includes(day.date.getDay())) return sum;
+          }
+
+          return sum + plannedDose;
+        }, 0);
+
+        const taken = dayLogs.length;
+        const missed = Math.max(0, planned - taken);
+        return {
+          ...day,
+          taken,
+          planned,
+          missed,
+          logs: dayLogs,
+        };
+      }).filter((day) => day.planned > 0 || day.taken > 0);
+
+      const takenTotal = dailyRows.reduce((sum, day) => sum + day.taken, 0);
+      const plannedTotal = dailyRows.reduce((sum, day) => sum + day.planned, 0);
+      const missedTotal = dailyRows.reduce((sum, day) => sum + day.missed, 0);
+
+      return {
+        personId,
+        ownerName,
+        dailyRows,
+        summary: {
+          taken: takenTotal,
+          planned: plannedTotal,
+          missed: missedTotal,
+          rate: plannedTotal > 0 ? Math.round((takenTotal / plannedTotal) * 100) : null,
+        },
+      };
+    }).filter((report) => report.dailyRows.length > 0 || statsPersonFilter !== 'all');
+  }, [statsPersonFilter, activePerson, persons, reportPeriodDays, logs, rolloverMinutes, meds, t]);
+
+  const reportPeriodLabel = useMemo(() => {
+    if (reportPeriodDays.length === 0) return '';
+    const oldest = reportPeriodDays[reportPeriodDays.length - 1];
+    const newest = reportPeriodDays[0];
+    return `${oldest.fullLabel} - ${newest.fullLabel}`;
+  }, [reportPeriodDays]);
+
+  const handleExportPDF = useCallback(async () => {
+    if (personalUsageReports.length === 0) return;
+    const periodTypeLabel = reportRangeType === 'week' ? t('weeklyView') : t('monthlyView');
+    let html = `<html><head><meta charset="utf-8"><style>
+      body{font-family:sans-serif;padding:20px;color:#111;}
+      h1{color:#059669;font-size:18px;margin-bottom:4px;}
+      h2{font-size:14px;color:#1f2937;margin:16px 0 4px;}
+      .period{font-size:12px;color:#6b7280;margin-bottom:16px;}
+      table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12px;}
+      th{background:#059669;color:#fff;padding:6px 8px;text-align:left;}
+      td{padding:5px 8px;border-bottom:1px solid #e5e7eb;}
+      tr:nth-child(even) td{background:#f0fdf4;}
+      .summary{font-size:11px;color:#6b7280;margin-bottom:8px;}
+    </style></head><body>`;
+    html += `<h1>${t('reportDetails')} — ${periodTypeLabel}</h1><p class="period">${reportPeriodLabel}</p>`;
+    for (const report of personalUsageReports) {
+      html += `<h2>${report.ownerName}</h2>`;
+      html += `<p class="summary">${t('takenDoses')}: ${report.summary.taken} / ${t('plannedDoses')}: ${report.summary.planned} / ${t('missedDoses')}: ${report.summary.missed}</p>`;
+      html += `<table><tr><th>${t('dateLabel')}</th><th>${t('takenDoses')}</th><th>${t('plannedDoses')}</th><th>${t('missedDoses')}</th></tr>`;
+      for (const row of report.dailyRows) {
+        html += `<tr><td>${row.label}</td><td>${row.taken}</td><td>${row.planned}</td><td>${row.missed}</td></tr>`;
+      }
+      html += `</table>`;
+    }
+    html += `</body></html>`;
+    try {
+      const { uri } = await Print.printToFileAsync({ html });
+      await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: t('exportPDF') });
+    } catch (e) {
+      Alert.alert(t('error'), e.message);
+    }
+  }, [personalUsageReports, reportPeriodLabel, reportRangeType, t]);
+
   const statsPersonOptions = useMemo(() => {
     if (!activePerson?.canSeeAll) return [];
     const selectable = persons
@@ -461,6 +606,71 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
               })}
             </ScrollView>
           )}
+          <View style={styles.reportSection}>
+            <Text style={styles.reportSectionTitle}>{t('reportDetails')}</Text>
+            <View style={styles.reportTypeRow}>
+              <TouchableOpacity
+                style={[styles.reportTypeChip, reportRangeType === 'week' && styles.reportTypeChipActive]}
+                onPress={() => setReportRangeType('week')}
+              >
+                <Text style={[styles.reportTypeChipText, reportRangeType === 'week' && styles.reportTypeChipTextActive]}>{t('weeklyView')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.reportTypeChip, reportRangeType === 'month' && styles.reportTypeChipActive]}
+                onPress={() => setReportRangeType('month')}
+              >
+                <Text style={[styles.reportTypeChipText, reportRangeType === 'month' && styles.reportTypeChipTextActive]}>{t('monthlyView')}</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.reportNavRow}>
+              <TouchableOpacity style={styles.reportNavBtn} onPress={() => setReportOffset((current) => current + 1)}>
+                <Text style={styles.reportNavBtnText}>{t('previousPeriod')}</Text>
+              </TouchableOpacity>
+              <Text style={styles.reportPeriodLabel}>{reportPeriodLabel}</Text>
+              <TouchableOpacity
+                style={[styles.reportNavBtn, reportOffset === 0 && styles.reportNavBtnDisabled]}
+                disabled={reportOffset === 0}
+                onPress={() => setReportOffset((current) => Math.max(0, current - 1))}
+              >
+                <Text style={[styles.reportNavBtnText, reportOffset === 0 && styles.reportNavBtnTextDisabled]}>{t('nextPeriod')}</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity style={styles.exportPdfBtn} onPress={handleExportPDF}>
+              <FileDown size={15} color="#fff" />
+              <Text style={styles.exportPdfBtnText}>{t('exportPDF')}</Text>
+            </TouchableOpacity>
+          </View>
+          {personalUsageReports.length > 0 ? (
+            <View style={styles.reportSection}>
+              {personalUsageReports.map((report) => (
+                <View key={`report-${report.ownerName}`} style={styles.reportCard}>
+                  <Text style={styles.reportOwner}>{report.ownerName}</Text>
+                  <View style={styles.reportRow}>
+                    <View style={[styles.reportBlock, reportRangeType === 'week' ? styles.reportBlockWeek : styles.reportBlockMonth]}>
+                      <Text style={styles.reportLabel}>{reportRangeType === 'week' ? t('weeklyReport') : t('monthlyReport')}</Text>
+                      <Text style={styles.reportRate}>{report.summary.rate != null ? `%${report.summary.rate}` : '-'}</Text>
+                      <Text style={styles.reportMeta}>{t('takenDoses')}: {report.summary.taken}</Text>
+                      <Text style={styles.reportMeta}>{t('plannedDoses')}: {report.summary.planned}</Text>
+                      <Text style={styles.reportMeta}>{t('missedDoses')}: {report.summary.missed}</Text>
+                      <Text style={styles.dailyUsageTitle}>{t('dailyUsageList')}</Text>
+                      {report.dailyRows.map((day) => (
+                        <View key={`${report.personId}-${day.dateKey}`} style={styles.dayUsageCard}>
+                          <View style={styles.dayUsageHeader}>
+                            <Text style={styles.dayUsageDate}>{day.label}</Text>
+                            <Text style={styles.dayUsageSummary}>{day.taken}/{day.planned}</Text>
+                          </View>
+                          <Text style={styles.dayUsageMeta}>{t('takenDoses')}: {day.taken} • {t('missedDoses')}: {day.missed}</Text>
+                          {day.logs.length > 0 ? day.logs.map((log) => (
+                            <Text key={log.id} style={styles.dayUsageLog}>• {log.time || '--:--'} - {log.medName || t('medicineFallback')} ({log.dosage || 1})</Text>
+                          )) : <Text style={styles.dayUsageEmpty}>{t('noUsageOnDay')}</Text>}
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : <Text style={styles.empty}>{t('noReportDays')}</Text>}
           {groupedStatsData.length === 0 ? (
             <Text style={styles.empty}>{t('noStats')}</Text>
           ) : groupedStatsData.map((group) => (
@@ -641,6 +851,38 @@ const styles = StyleSheet.create({
   tabBtnActive: { borderBottomWidth: 2, borderBottomColor: '#059669' },
   tabBtnText: { fontSize: 14, fontWeight: '600', color: '#6B7280' },
   tabBtnTextActive: { color: '#059669' },
+  reportSection: { marginBottom: 16 },
+  reportSectionTitle: { fontSize: 15, fontWeight: '800', color: '#111827', marginBottom: 10 },
+  reportTypeRow: { flexDirection: 'row', marginBottom: 10, gap: 8 },
+  reportTypeChip: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#F3F4F6', borderRadius: 999, borderWidth: 1, borderColor: '#E5E7EB' },
+  reportTypeChipActive: { backgroundColor: '#ECFDF5', borderColor: '#34D399' },
+  reportTypeChipText: { fontSize: 12, fontWeight: '700', color: '#4B5563' },
+  reportTypeChipTextActive: { color: '#047857' },
+  reportNavRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 10 },
+  reportNavBtn: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
+  reportNavBtnDisabled: { opacity: 0.5 },
+  reportNavBtnText: { fontSize: 12, fontWeight: '700', color: '#374151' },
+  reportNavBtnTextDisabled: { color: '#9CA3AF' },
+  reportPeriodLabel: { flex: 1, textAlign: 'center', fontSize: 12, fontWeight: '700', color: '#111827' },
+  exportPdfBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#059669', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 16, marginTop: 8 },
+  exportPdfBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  reportCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: '#D1FAE5' },
+  reportOwner: { fontSize: 14, fontWeight: '700', color: '#065F46', marginBottom: 10 },
+  reportRow: { flexDirection: 'row', gap: 10 },
+  reportBlock: { flex: 1, borderRadius: 10, padding: 12 },
+  reportBlockWeek: { backgroundColor: '#ECFDF5' },
+  reportBlockMonth: { backgroundColor: '#EFF6FF' },
+  reportLabel: { fontSize: 11, fontWeight: '700', color: '#4B5563', marginBottom: 6 },
+  reportRate: { fontSize: 24, fontWeight: '800', color: '#111827', marginBottom: 6 },
+  reportMeta: { fontSize: 11, color: '#4B5563', marginBottom: 2 },
+  dailyUsageTitle: { fontSize: 12, fontWeight: '800', color: '#111827', marginTop: 10, marginBottom: 8 },
+  dayUsageCard: { backgroundColor: '#FFFFFF', borderRadius: 8, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#E5E7EB' },
+  dayUsageHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  dayUsageDate: { fontSize: 12, fontWeight: '700', color: '#111827' },
+  dayUsageSummary: { fontSize: 12, fontWeight: '800', color: '#059669' },
+  dayUsageMeta: { fontSize: 11, color: '#6B7280', marginTop: 2, marginBottom: 6 },
+  dayUsageLog: { fontSize: 11, color: '#374151', marginTop: 2 },
+  dayUsageEmpty: { fontSize: 11, color: '#9CA3AF', fontStyle: 'italic' },
   statsFilterRow: { paddingBottom: 10, paddingRight: 6 },
   statsFilterChip: {
     backgroundColor: '#F3F4F6',
