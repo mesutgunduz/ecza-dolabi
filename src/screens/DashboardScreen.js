@@ -3,11 +3,12 @@ import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, 
   ActivityIndicator, Alert, Platform, TextInput, AppState
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import * as Notifications from 'expo-notifications';
 import { scheduleReminderSnooze } from '../utils/notifications';
+import { translateMedicineForm, translateMedicineUnit } from '../utils/medicineDisplay';
 import { 
   Check, AlertCircle, Pill, Clock, Search
 } from 'lucide-react-native';
@@ -15,6 +16,7 @@ import { useTranslation } from '../i18n/LanguageContext';
 
 export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
   const { t } = useTranslation();
+  const navigation = useNavigation();
   const [meds, setMeds] = useState([]);
   const [persons, setPersons] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -403,10 +405,14 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
 
         {/* Kaçırılan Doz Özeti */}
         {missedDoseItems.length > 0 && (
-          <View style={styles.missedSummaryBox}>
+          <TouchableOpacity
+            style={styles.missedSummaryBox}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('logs', { focusMissedDosesKey: Date.now() })}
+          >
             <AlertCircle color="#B45309" size={14} />
             <Text style={styles.missedSummaryText}>{t('missedDose')} {missedDoseItems.reduce((sum, item) => sum + item.missed, 0)}</Text>
-          </View>
+          </TouchableOpacity>
         )}
 
         {/* SKT Uyarısı */}
@@ -484,7 +490,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
                   <View style={{flexDirection:'row', alignItems:'center'}}>
                     <Text style={styles.medName}>{med.name}</Text>
                     <View style={[styles.badge, {backgroundColor: med.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5'}]}>
-                      <Text style={[styles.badgeText, {color: med.form === 'Şurup' ? '#DB2777' : '#059669'}]}>{med.form || 'Tablet'}</Text>
+                      <Text style={[styles.badgeText, {color: med.form === 'Şurup' ? '#DB2777' : '#059669'}]}>{translateMedicineForm(med.form, t)}</Text>
                     </View>
                   {med.personId && (
                       <Text style={styles.ownerText}>
@@ -492,7 +498,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
                       </Text>
                     )}
                   </View>
-                  <Text style={styles.medSub}>{t('stock')} {med.quantity} {med.unit} | {t('today')} {count}/{med.dailyDose || '-'}</Text>
+                  <Text style={styles.medSub}>{t('stock')} {med.quantity} {translateMedicineUnit(med.unit, t)} | {t('today')} {count}/{med.dailyDose || '-'}</Text>
                   
                   {/* Alarm Saatleri */}
                   {reminderTimes.length > 0 && (
@@ -514,7 +520,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
                 </View>
               </View>
               <View style={styles.medBottom}>
-                <Text style={styles.infoText}>{med.consumePerUsage} {med.unit} {t('willUse')}</Text>
+                <Text style={styles.infoText}>{med.consumePerUsage} {translateMedicineUnit(med.unit, t)} {t('willUse')}</Text>
                 <View style={styles.actionRow}>
                   {canSnoozeNow && (
                     <TouchableOpacity

@@ -11,6 +11,8 @@ import { collection, addDoc, getDocs, deleteDoc, doc, query } from 'firebase/fir
 import { LogOut, Pill, Clock, CheckCircle, Shield, Users, Check, Download, Upload } from 'lucide-react-native';
 import { useTranslation } from '../i18n/LanguageContext';
 
+const RECENT_ACTIVITY_LIMIT = 10;
+
 export default function ProfileScreen({ activePerson, onPersonChange, onFullLogout }) {
   const { t, language, setLanguage } = useTranslation();
   const [myMeds, setMyMeds] = useState([]);
@@ -24,6 +26,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
   const [currentFamilyPassword, setCurrentFamilyPassword] = useState('');
   const [newFamilyPassword, setNewFamilyPassword] = useState('');
   const [newFamilyPasswordAgain, setNewFamilyPasswordAgain] = useState('');
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const todayStr = (() => {
@@ -49,7 +52,8 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       const today = allLogs.filter(l => l.personId === activePerson.id && l.date === todayStr);
       const recent = allLogs
         .filter(l => l.personId === activePerson.id)
-        .slice(0, 10);
+        .sort((a, b) => getLogTimestamp(b) - getLogTimestamp(a))
+        .slice(0, RECENT_ACTIVITY_LIMIT);
 
       setMyMeds(meds);
       setTodayLogs(today);
@@ -78,6 +82,22 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     if (log.takerName) return log.takerName;
     const p = persons.find(x => x.id === log.personId);
     return p ? p.name : (activePerson.id === log.personId ? activePerson.name : 'Bilinmeyen');
+  };
+
+  const getLogTimestamp = (log) => {
+    const rawTs = log?.timestamp;
+    if (typeof rawTs === 'number') return rawTs;
+    if (rawTs && typeof rawTs.seconds === 'number') return rawTs.seconds * 1000;
+
+    const datePart = String(log?.date || '').trim();
+    const timePart = String(log?.time || '').trim() || '00:00';
+    const dateMatch = datePart.match(/^(\d{2})[.\-/](\d{2})[.\-/](\d{4})$/);
+    if (!dateMatch) return 0;
+
+    const [, day, month, year] = dateMatch;
+    const isoDateTime = `${year}-${month}-${day}T${timePart.length === 5 ? `${timePart}:00` : timePart}`;
+    const parsed = new Date(isoDateTime).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
   };
 
   const handleTakeMed = async (med) => {
@@ -303,6 +323,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     setCurrentFamilyPassword('');
     setNewFamilyPassword('');
     setNewFamilyPasswordAgain('');
+    setShowPasswordForm(false);
     Alert.alert(t('success'), t('passwordUpdated'));
   };
 
@@ -336,6 +357,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
 
       {/* Son Hareketler */}
       <Text style={styles.sectionTitle}>{t('recentActivity')}</Text>
+      <Text style={styles.sectionHint}>{t('recentActivityHint')}</Text>
       <View style={styles.logBox}>
         {recentLogs.map(log => (
           <View key={log.id} style={styles.logItem}>
@@ -353,36 +375,90 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
           <Text style={styles.sectionTitle}>{t('familyPasswordTitle')}</Text>
           <View style={styles.backupBox}>
             <Text style={styles.backupDesc}>{t('familyPasswordDesc')}</Text>
-            <TextInput
-              style={styles.passwordInput}
-              placeholder={t('currentPassword')}
-              value={currentFamilyPassword}
-              onChangeText={setCurrentFamilyPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-            <TextInput
-              style={styles.passwordInput}
-              placeholder={t('newPassword')}
-              value={newFamilyPassword}
-              onChangeText={setNewFamilyPassword}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-            <TextInput
-              style={styles.passwordInput}
-              placeholder={t('newPasswordAgain')}
-              value={newFamilyPasswordAgain}
-              onChangeText={setNewFamilyPasswordAgain}
-              secureTextEntry
-              autoCapitalize="none"
-            />
-            <TouchableOpacity style={styles.exportBtn} onPress={handleFamilyPasswordUpdate}>
+            <TouchableOpacity
+              style={[styles.exportBtn, styles.inlineActionBtn]}
+              onPress={() => setShowPasswordForm((prev) => !prev)}
+            >
               <Shield color="#fff" size={16} />
-              <Text style={styles.backupBtnText}>{t('updatePassword')}</Text>
+              <Text style={styles.backupBtnText}>{showPasswordForm ? t('hidePasswordForm') : t('changePassword')}</Text>
             </TouchableOpacity>
-          </View>
 
+            {showPasswordForm && (
+              <>
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder={t('currentPassword')}
+                  value={currentFamilyPassword}
+                  onChangeText={setCurrentFamilyPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                />
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder={t('newPassword')}
+                  value={newFamilyPassword}
+                  onChangeText={setNewFamilyPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                />
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder={t('newPasswordAgain')}
+                  value={newFamilyPasswordAgain}
+                  onChangeText={setNewFamilyPasswordAgain}
+                  secureTextEntry
+                  autoCapitalize="none"
+                />
+                <TouchableOpacity style={styles.exportBtn} onPress={handleFamilyPasswordUpdate}>
+                  <Shield color="#fff" size={16} />
+                  <Text style={styles.backupBtnText}>{t('updatePassword')}</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </>
+      )}
+
+      {activePerson?.canSeeAll && (
+        <>
+          <Text style={styles.sectionTitle}>{t('backupTitle')}</Text>
+          <View style={styles.backupBox}>
+            <Text style={styles.backupDesc}>{t('backupDesc')}</Text>
+            <View style={styles.backupBtns}>
+              <TouchableOpacity style={styles.exportBtn} onPress={handleExport}>
+                <Download color="#fff" size={16} />
+                <Text style={styles.backupBtnText}>{t('export')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.importBtn} onPress={handleImport}>
+                <Upload color="#fff" size={16} />
+                <Text style={styles.backupBtnText}>{t('import')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
+      )}
+
+      {/* Dil Seçici */}
+      <View style={[styles.backupBox, { marginTop: 16, marginBottom: 8 }]}>
+        <Text style={[styles.sectionTitle, { marginTop: 0, marginBottom: 12 }]}>{t('language')}</Text>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <TouchableOpacity
+            style={[styles.exportBtn, language !== 'tr' && { backgroundColor: '#D1D5DB' }]}
+            onPress={() => setLanguage('tr')}
+          >
+            <Text style={styles.backupBtnText}>{t('languageTR')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.exportBtn, language !== 'en' && { backgroundColor: '#D1D5DB' }]}
+            onPress={() => setLanguage('en')}
+          >
+            <Text style={styles.backupBtnText}>{t('languageEN')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {activePerson?.canSeeAll && (
+        <>
           <Text style={styles.sectionTitle}>{t('dayRollover')}</Text>
           <View style={styles.rolloverBox}>
             <Text style={styles.rolloverText}>{t('dayRolloverDesc')}</Text>
@@ -397,11 +473,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
             </View>
             <Text style={styles.rolloverHint}>{t('dayRolloverDefault')}</Text>
           </View>
-        </>
-      )}
 
-      {activePerson?.canSeeAll && (
-        <>
           <Text style={styles.sectionTitle}>{t('snoozeWindow')}</Text>
           <View style={styles.rolloverBox}>
             <Text style={styles.rolloverText}>{t('snoozeWindowDesc')}</Text>
@@ -437,48 +509,10 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
         </>
       )}
 
-      {activePerson?.canSeeAll && (
-        <>
-          <Text style={styles.sectionTitle}>{t('backupTitle')}</Text>
-          <View style={styles.backupBox}>
-            <Text style={styles.backupDesc}>{t('backupDesc')}</Text>
-            <View style={styles.backupBtns}>
-              <TouchableOpacity style={styles.exportBtn} onPress={handleExport}>
-                <Download color="#fff" size={16} />
-                <Text style={styles.backupBtnText}>{t('export')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.importBtn} onPress={handleImport}>
-                <Upload color="#fff" size={16} />
-                <Text style={styles.backupBtnText}>{t('import')}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </>
-      )}
-
       <TouchableOpacity style={styles.fullLogout} onPress={() => onFullLogout()}>
         <LogOut color="#EF4444" size={20} />
         <Text style={styles.logoutText}>{t('logout')}</Text>
       </TouchableOpacity>
-
-      {/* Dil Seçici */}
-      <View style={[styles.backupBox, { marginTop: 16, marginBottom: 8 }]}>
-        <Text style={[styles.sectionTitle, { marginTop: 0, marginBottom: 12 }]}>{t('language')}</Text>
-        <View style={{ flexDirection: 'row', gap: 10 }}>
-          <TouchableOpacity
-            style={[styles.exportBtn, language !== 'tr' && { backgroundColor: '#D1D5DB' }]}
-            onPress={() => setLanguage('tr')}
-          >
-            <Text style={styles.backupBtnText}>{t('languageTR')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.exportBtn, language !== 'en' && { backgroundColor: '#D1D5DB' }]}
-            onPress={() => setLanguage('en')}
-          >
-            <Text style={styles.backupBtnText}>{t('languageEN')}</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
     </ScrollView>
   );
 }
@@ -492,13 +526,14 @@ const styles = StyleSheet.create({
   name: { fontSize: 18, fontWeight: 'bold' },
   role: { fontSize: 12, color: '#6B7280' },
   sectionTitle: { fontSize: 14, fontWeight: 'bold', color: '#374151', marginBottom: 10, marginTop: 10 },
+  sectionHint: { fontSize: 12, color: '#6B7280', marginTop: -4, marginBottom: 10 },
   miniCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fff', padding: 12, borderRadius: 10, marginBottom: 8 },
   medName: { fontWeight: 'bold', color: '#111827' },
   miniBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#059669', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 },
   miniBtnText: { color: '#fff', fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
   logBox: { backgroundColor: '#fff', borderRadius: 12, padding: 12 },
   logItem: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#F3F4F6', paddingVertical: 8 },
-  logTime: { width: 50, fontSize: 11, color: '#6B7280', fontWeight: 'bold' },
+  logTime: { width: 110, fontSize: 11, color: '#6B7280', fontWeight: 'bold', marginRight: 10 },
   logText: { fontSize: 13, fontWeight: '500' },
   logTaker: { fontSize: 11, color: '#9CA3AF' },
   rolloverBox: { backgroundColor: '#fff', borderRadius: 12, padding: 12, marginTop: 6 },
@@ -518,6 +553,7 @@ const styles = StyleSheet.create({
   passwordInput: { backgroundColor: '#F9FAFB', borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10, color: '#111827' },
   backupBtns: { flexDirection: 'row', gap: 10 },
   exportBtn: { flex: 1, backgroundColor: '#059669', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 8 },
+  inlineActionBtn: { marginBottom: 10 },
   importBtn: { flex: 1, backgroundColor: '#3B82F6', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 8 },
   backupBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 12, marginLeft: 6 },
 });

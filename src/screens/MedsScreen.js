@@ -12,19 +12,12 @@ import { parseITSBarcode } from '../utils/barcodeParser';
 import { searchBarcodeFromAPI } from '../utils/api';
 import { parseMedicineTextFromOCR } from '../utils/ocrParser';
 import { requestNotificationPermissions, rebuildRemindersForPerson } from '../utils/notifications';
+import { getWeekdayShortLabel, translateMedicineForm, translateMedicineUnit } from '../utils/medicineDisplay';
 import { Plus, Trash2, Edit2, X, Check, Search, Bell, BellOff, Scan, ScanSearch, Clock, AlertCircle } from 'lucide-react-native';
 import { useTranslation } from '../i18n/LanguageContext';
 
 const defaultBarcodeMeta = { gtin: '', serial: '', batch: '' };
-const WEEK_DAY_OPTIONS = [
-  { value: 1, label: 'Pzt' },
-  { value: 2, label: 'Sal' },
-  { value: 3, label: 'Car' },
-  { value: 4, label: 'Per' },
-  { value: 5, label: 'Cum' },
-  { value: 6, label: 'Cmt' },
-  { value: 0, label: 'Paz' },
-];
+const WEEK_DAY_OPTIONS = [1, 2, 3, 4, 5, 6, 0];
 
 export default function MedsScreen({ activePerson }) {
   const { t } = useTranslation();
@@ -269,13 +262,13 @@ export default function MedsScreen({ activePerson }) {
   };
 
   const getScheduleText = (med) => {
-    if (med.scheduleType !== 'weekly') return 'Plan: Gunluk';
+    if (med.scheduleType !== 'weekly') return `${t('schedule')} ${t('daily')}`;
     const selected = (Array.isArray(med.weeklyDays) ? med.weeklyDays : [])
       .map((d) => Number(d))
       .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
-    if (selected.length === 0) return 'Plan: Haftalik (gun secili degil)';
-    const dayLabels = WEEK_DAY_OPTIONS.filter((d) => selected.includes(d.value)).map((d) => d.label);
-    return `Plan: Haftalik (${dayLabels.join(', ')})`;
+    if (selected.length === 0) return `${t('schedule')} ${t('weeklyNoDays')}`;
+    const dayLabels = WEEK_DAY_OPTIONS.filter((dayValue) => selected.includes(dayValue)).map((dayValue) => getWeekdayShortLabel(dayValue, t));
+    return `${t('schedule')} ${t('weekly')} (${dayLabels.join(', ')})`;
   };
 
   const checkExpiryStatus = (dateStr) => {
@@ -509,7 +502,7 @@ export default function MedsScreen({ activePerson }) {
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: 12 + headerTopInset }]}>
         <View style={styles.headerLeft}>
-          <Text style={styles.title}>İlaç Dolabım</Text>
+          <Text style={styles.title}>{t('medCabinet')}</Text>
         </View>
         <TouchableOpacity style={styles.addBtn} onPress={() => openForm()}>
           <Plus color="#fff" size={20} />
@@ -545,13 +538,13 @@ export default function MedsScreen({ activePerson }) {
         <View style={styles.alertPanel}>
           <View style={styles.alertHeader}>
             <AlertCircle color="#fff" size={18} />
-            <Text style={styles.alertTitle}>SKT'SI GECEN ILACLAR VAR!</Text>
+            <Text style={styles.alertTitle}>{t('expired')}</Text>
           </View>
           {expiredMeds.map(med => (
             <View key={med.id} style={styles.alertItem}>
-              <Text style={styles.alertItemName}>{med.name} - SKT: {med.expiryDate}</Text>
+              <Text style={styles.alertItemName}>{med.name} - {t('expiryDate')}: {med.expiryDate}</Text>
               <TouchableOpacity onPress={() => handleDelete(med.id)} style={styles.alertDeleteBtn}>
-                <Text style={styles.alertDeleteText}>Sil</Text>
+                <Text style={styles.alertDeleteText}>{t('delete')}</Text>
               </TouchableOpacity>
             </View>
           ))}
@@ -570,7 +563,7 @@ export default function MedsScreen({ activePerson }) {
               <View style={styles.medHeader}>
                 <Text style={[styles.medName, isPassive && styles.medNameInactive]}>{item.name}</Text>
                 <View style={[styles.badge, { backgroundColor: item.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5' }]}>
-                  <Text style={[styles.badgeText, { color: item.form === 'Şurup' ? '#DB2777' : '#059669' }]}>{item.form || 'Tablet'}</Text>
+                  <Text style={[styles.badgeText, { color: item.form === 'Şurup' ? '#DB2777' : '#059669' }]}>{translateMedicineForm(item.form, t)}</Text>
                 </View>
                 <View style={[styles.stateBadge, isPassive ? styles.stateBadgeOff : styles.stateBadgeOn]}>
                   <Text style={[styles.stateBadgeText, isPassive ? styles.stateBadgeTextOff : styles.stateBadgeTextOn]}>
@@ -578,7 +571,7 @@ export default function MedsScreen({ activePerson }) {
                   </Text>
                 </View>
               </View>
-              <Text style={[styles.subText, isPassive && styles.passiveSubText]}>Kalan: {item.quantity} {item.unit} | Doz: {item.consumePerUsage}</Text>
+              <Text style={[styles.subText, isPassive && styles.passiveSubText]}>{t('stock2')} {item.quantity} {translateMedicineUnit(item.unit, t)} | {t('dose')} {item.consumePerUsage}</Text>
               <Text style={[styles.ownerLine, isPassive && styles.passiveSubText]}>
                 {t('person')} {item.personId === 'all' ? t('shared') : (persons.find(p => p.id === item.personId)?.name || t('unknown'))}
               </Text>
@@ -602,7 +595,7 @@ export default function MedsScreen({ activePerson }) {
 
               {item.expiryDate ? (
                 <Text style={[styles.dateText, isPassive && styles.passiveSubText, checkExpiryStatus(item.expiryDate) === 'expired' && styles.expiredText]}>
-                  SKT: {item.expiryDate}
+                  {t('expiryDate')}: {item.expiryDate}
                 </Text>
               ) : null}
             </View>
@@ -662,7 +655,7 @@ export default function MedsScreen({ activePerson }) {
               </View>
               <View style={styles.halfField}>
                 <Text style={styles.label}>{t('unit')}</Text>
-                <TextInput style={[styles.input, styles.readonlyInput]} editable={false} value={unit} />
+                <TextInput style={[styles.input, styles.readonlyInput]} editable={false} value={translateMedicineUnit(unit, t)} />
               </View>
             </View>
 
@@ -684,7 +677,7 @@ export default function MedsScreen({ activePerson }) {
                 <TextInput
                   style={styles.input}
                   keyboardType="decimal-pad"
-                  placeholder="Örn: 0.5"
+                  placeholder={t('usageDosePlaceholder')}
                   value={consumePerUsage}
                   onChangeText={(val) => setConsumePerUsage(val.replace(',', '.'))}
                 />
@@ -694,7 +687,7 @@ export default function MedsScreen({ activePerson }) {
                 <TextInput
                   style={styles.input}
                   keyboardType="numeric"
-                  placeholder="Örn: 2"
+                  placeholder={t('dailyUsageCountPlaceholder')}
                   value={dailyDose}
                   onChangeText={(val) => setDailyDose(val.replace(/[^0-9]/g, ''))}
                 />
@@ -721,15 +714,15 @@ export default function MedsScreen({ activePerson }) {
               <View style={[styles.reminderBox, { marginTop: 2 }]}> 
                 <Text style={styles.label}>{t('usageDays')}</Text>
                 <View style={styles.timesWrap}>
-                  {WEEK_DAY_OPTIONS.map((day) => {
-                    const selected = weeklyDays.includes(day.value);
+                  {WEEK_DAY_OPTIONS.map((dayValue) => {
+                    const selected = weeklyDays.includes(dayValue);
                     return (
                       <TouchableOpacity
-                        key={day.value}
+                        key={dayValue}
                         style={[styles.weekChip, selected && styles.weekChipActive]}
-                        onPress={() => toggleWeeklyDay(day.value)}
+                        onPress={() => toggleWeeklyDay(dayValue)}
                       >
-                        <Text style={[styles.weekChipText, selected && styles.weekChipTextActive]}>{day.label}</Text>
+                        <Text style={[styles.weekChipText, selected && styles.weekChipTextActive]}>{getWeekdayShortLabel(dayValue, t)}</Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -760,7 +753,7 @@ export default function MedsScreen({ activePerson }) {
             {reminderTimes.length > 0 && (
               <View style={styles.reminderBox}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <Text style={styles.label}><Bell size={14} color="#374151" /> Alarm Saatleri</Text>
+                  <Text style={styles.label}><Bell size={14} color="#374151" /> {t('alarmTimes')}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <Text style={{ fontSize: 13, color: notificationsEnabled ? '#059669' : '#9CA3AF' }}>
                       {notificationsEnabled ? t('notifOn') : t('notifOff')}

@@ -1,9 +1,9 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   Alert, ActivityIndicator, Linking, ScrollView, Modal, TextInput, AppState, PanResponder
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useRoute } from '@react-navigation/native';
 import { getLogs, getMeds, getPersons, deleteLog, editLog, markAsTaken, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import { Clock, User, Trash2, Pill, Share2, Check, BarChart2, ScrollText, Edit2 } from 'lucide-react-native';
@@ -11,6 +11,8 @@ import { useTranslation } from '../i18n/LanguageContext';
 
 export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
   const { t } = useTranslation();
+  const route = useRoute();
+  const listRef = useRef(null);
   const [logs, setLogs] = useState([]);
   const [persons, setPersons] = useState([]);
   const [meds, setMeds] = useState([]);
@@ -94,6 +96,16 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       setStatsPersonFilter(activePerson.id);
     }
   }, [activePerson]);
+
+  useEffect(() => {
+    if (!route.params?.focusMissedDosesKey) return;
+    setActiveTab('history');
+  }, [route.params?.focusMissedDosesKey]);
+
+  useEffect(() => {
+    if (activeTab !== 'history' || !route.params?.focusMissedDosesKey) return;
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  }, [activeTab, route.params?.focusMissedDosesKey]);
 
   const missedDoseItems = useMemo(() => {
     const now = new Date();
@@ -528,6 +540,7 @@ export default function LogsScreen({ activePerson, dataRefreshKey = 0 }) {
       )}
 
       <FlatList
+        ref={listRef}
         data={logs}
         keyExtractor={item => item.id}
         renderItem={({ item }) => (

@@ -7,6 +7,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getMeds, getReorderCartItems, saveReorderCartItems, clearReorderCartItems } from '../utils/storage';
 import { AlertCircle, ShoppingCart, Plus, Trash2, Check } from 'lucide-react-native';
 import { useTranslation } from '../i18n/LanguageContext';
+import { translateMedicineForm, translateMedicineUnit } from '../utils/medicineDisplay';
 
 const REORDER_THRESHOLD = 5;
 
@@ -102,7 +103,7 @@ export default function ReorderScreen() {
               <View key={item.id} style={styles.cartItem}>
                 <Check color="#059669" size={14} />
                 <Text style={styles.cartItemName}>{item.name}</Text>
-                <Text style={styles.cartItemMeta}>{t('remaining')}: {item.quantity} {item.unit}</Text>
+                <Text style={styles.cartItemMeta}>{t('remaining')}: {item.quantity} {translateMedicineUnit(item.unit, t)}</Text>
                 <TouchableOpacity onPress={() => handleRemoveFromCart(item.id)} style={styles.cartRemoveBtn}>
                   <Trash2 color="#EF4444" size={14} />
                 </TouchableOpacity>
@@ -134,13 +135,13 @@ export default function ReorderScreen() {
                   <View style={styles.medInfo}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.medName}>{item.name}</Text>
-                      <Text style={styles.medMeta}>{item.form || 'Tablet'} • {item.unit}</Text>
-                      <Text style={styles.mediStok}>{t('remainingStock')} {item.quantity} {item.unit}</Text>
-                      {item.expiryDate && <Text style={styles.expiryText}>SKT: {item.expiryDate}</Text>}
+                      <Text style={styles.medMeta}>{translateMedicineForm(item.form, t)} • {translateMedicineUnit(item.unit, t)}</Text>
+                      <Text style={styles.mediStok}>{t('remainingStock')} {item.quantity} {translateMedicineUnit(item.unit, t)}</Text>
+                      {item.expiryDate && <Text style={styles.expiryText}>{t('expiryDate')}: {item.expiryDate}</Text>}
                     </View>
                     <View style={styles.qtyBox}>
                       <Text style={styles.qtyText}>{item.quantity}</Text>
-                      <Text style={styles.qtyLabel}>{item.unit}</Text>
+                      <Text style={styles.qtyLabel}>{translateMedicineUnit(item.unit, t)}</Text>
                     </View>
                   </View>
                   <TouchableOpacity
