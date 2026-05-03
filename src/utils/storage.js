@@ -58,6 +58,18 @@ export const getPendingOfflineOpsCount = async () => {
   return queue.length;
 };
 
+export const getPendingOfflineOpsPreview = async (limit = 20) => {
+  const queue = await readPendingOps();
+  const capped = Math.max(1, Math.min(100, Number(limit) || 20));
+  return queue.slice(0, capped).map((item) => ({
+    id: item?.id || '',
+    type: item?.type || 'unknown',
+    createdAt: Number(item?.createdAt || 0),
+    medId: item?.payload?.medId || '',
+    medName: item?.payload?.medName || '',
+  }));
+};
+
 const WRITE_RETRY_DELAYS_MS = [250, 700, 1400];
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -1,10 +1,10 @@
 ﻿import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { 
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, 
+  View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal,
   ActivityIndicator, Alert, Platform, TextInput, AppState
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds, getPendingOfflineOpsCount } from '../utils/storage';
+import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds, getPendingOfflineOpsCount, getPendingOfflineOpsPreview } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import * as Notifications from 'expo-notifications';
 import { getPersistedSnoozedReminders, scheduleReminderSnooze } from '../utils/notifications';
@@ -29,6 +29,8 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
   const [notificationTargetIds, setNotificationTargetIds] = useState([]);
   const [snoozedReminderByMed, setSnoozedReminderByMed] = useState({});
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [pendingSyncItems, setPendingSyncItems] = useState([]);
+  const [syncModalVisible, setSyncModalVisible] = useState(false);
 
   const loadSnoozedReminderState = useCallback(async () => {
     try {
@@ -52,6 +54,16 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       setSnoozedReminderByMed({});
     }
   }, [activePerson]);
+
+  const loadPendingSyncItems = useCallback(async () => {
+    try {
+      const items = await getPendingOfflineOpsPreview(30);
+      setPendingSyncItems(items);
+    } catch (err) {
+      console.error('loadPendingSyncItems failed:', err);
+      setPendingSyncItems([]);
+    }
+  }, []);
 
   const rolloverMinutes = useMemo(() => parseRolloverToMinutes(rolloverTime), [rolloverTime]);
   const logicalTodayKey = useMemo(() => getLogicalDateKeyForNow(new Date(), rolloverMinutes), [rolloverMinutes]);
@@ -83,6 +95,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       setSnoozeAfterMinutes(snoozeCfg.afterMinutes);
       setNotificationTargetIds(targetIds);
       setPendingSyncCount(pendingCount);
+      await loadPendingSyncItems();
       await loadSnoozedReminderState();
 
       if (activePerson && !activePerson.canSeeAll) {
@@ -95,7 +108,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
     } finally {
       setLoading(false);
     }
-  }, [activePerson, loadSnoozedReminderState]);
+  }, [activePerson, loadSnoozedReminderState, loadPendingSyncItems]);
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData, dataRefreshKey]));
 
@@ -435,11 +448,18 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         <View style={styles.welcomeBox}>
           <Text style={styles.welcomeTitle}>{t('hello')}, {activePerson?.name} 👋</Text>
           <Text style={styles.welcomeSub}>{t('activeMeds')}</Text>
-          <View style={[styles.syncBadge, pendingSyncCount > 0 ? styles.syncBadgePending : styles.syncBadgeOk]}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={async () => {
+              await loadPendingSyncItems();
+              setSyncModalVisible(true);
+            }}
+            style={[styles.syncBadge, pendingSyncCount > 0 ? styles.syncBadgePending : styles.syncBadgeOk]}
+          >
             <Text style={[styles.syncBadgeText, pendingSyncCount > 0 ? styles.syncBadgeTextPending : styles.syncBadgeTextOk]}>
               {pendingSyncCount > 0 ? `${t('syncPending')}: ${pendingSyncCount}` : t('syncUpToDate')}
             </Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* Arama Çubuğu */}
@@ -626,6 +646,31 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
           );
         })}
       </ScrollView>
+
+      <Modal visible={syncModalVisible} transparent animationType="fade" onRequestClose={() => setSyncModalVisible(false)}>
+        <View style={styles.syncModalBackdrop}>
+          <View style={styles.syncModalCard}>
+            <Text style={styles.syncModalTitle}>{t('syncPendingDetails')}</Text>
+            {pendingSyncItems.length > 0 ? pendingSyncItems.map((item) => (
+              <View key={item.id || `${item.type}-${item.createdAt}`} style={styles.syncModalItem}>
+                <Text style={styles.syncModalItemType}>
+                  {item.type === 'markAsTaken' ? t('syncOpMarkAsTaken') : item.type}
+                </Text>
+                <Text style={styles.syncModalItemMeta}>
+                  {item.medName || item.medId || '-'}
+                </Text>
+                <Text style={styles.syncModalItemMeta}>
+                  {item.createdAt ? new Date(item.createdAt).toLocaleString(language === 'en' ? 'en-GB' : 'tr-TR') : '-'}
+                </Text>
+              </View>
+            )) : <Text style={styles.syncModalEmpty}>{t('syncNoPendingOps')}</Text>}
+
+            <TouchableOpacity style={styles.syncModalCloseBtn} onPress={() => setSyncModalVisible(false)}>
+              <Text style={styles.syncModalCloseBtnText}>{t('close')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -642,6 +687,15 @@ const styles = StyleSheet.create({
   syncBadgeText: { fontSize: 11, fontWeight: '700' },
   syncBadgeTextPending: { color: '#92400E' },
   syncBadgeTextOk: { color: '#065F46' },
+  syncModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', padding: 20 },
+  syncModalCard: { backgroundColor: '#fff', borderRadius: 12, padding: 14, maxHeight: '75%' },
+  syncModalTitle: { fontSize: 15, fontWeight: '800', color: '#111827', marginBottom: 10 },
+  syncModalItem: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 10, marginBottom: 8, backgroundColor: '#F9FAFB' },
+  syncModalItemType: { fontSize: 12, fontWeight: '700', color: '#065F46' },
+  syncModalItemMeta: { fontSize: 11, color: '#4B5563', marginTop: 2 },
+  syncModalEmpty: { fontSize: 12, color: '#9CA3AF', fontStyle: 'italic', marginBottom: 8 },
+  syncModalCloseBtn: { alignSelf: 'flex-end', marginTop: 8, backgroundColor: '#059669', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  syncModalCloseBtnText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   alertPanel: { backgroundColor: '#EF4444', borderRadius: 16, padding: 12, marginBottom: 20 },
   alertHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   alertTitle: { color: '#fff', fontWeight: 'bold', fontSize: 12, marginLeft: 8 },
