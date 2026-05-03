@@ -242,7 +242,11 @@ export default function App() {
   }, [isAuthenticated, activePerson?.id]);
 
   useEffect(() => {
+    // TEMPORARY DEBUG: Disable notification response handler to check if it wakens screen
     const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => {
+      console.log('[DEBUG] Notification response received, but handler disabled for testing');
+      // Handler code commented out for debugging keep-awake issue
+      /*
       const actionId = response?.actionIdentifier;
       const data = response?.notification?.request?.content?.data || {};
       const notificationId = response?.notification?.request?.identifier;
@@ -301,6 +305,7 @@ export default function App() {
           await Notifications.dismissNotificationAsync(notificationId);
         }
       }
+      */
     });
 
     return () => {
