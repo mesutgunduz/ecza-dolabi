@@ -2,7 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helpers
+    // ---------------------------------------------------------------------------
+    // Helper functions
+    // ---------------------------------------------------------------------------
+
     function hasFamilyDoc(familyCode) {
       return exists(/databases/$(database)/documents/families/$(familyCode));
     }
@@ -14,28 +17,37 @@ service cloud.firestore {
         && family.familyPassword.size() >= 4;
     }
 
+    // Core auth guard: familyCode must exist and have valid shape.
+    // NOTE: This app has no Firebase Authentication. The familyCode + familyPassword
+    // pair acts as the shared secret. True per-user isolation requires Firebase Auth.
     function familyOk(familyCode) {
       return hasFamilyDoc(familyCode) && validFamilyDocShape(familyCode);
     }
 
-    // NOTE: This app has no Firebase Authentication.
-    // The familyCode + familyPassword pair acts as the shared secret.
-    // True per-user isolation requires adding Firebase Auth in the next phase.
+    // Validate that a familyCode looks like a plausible code (4-20 alphanumeric chars).
+    // This prevents trivially short or malformed codes from being created.
+    function validFamilyCodeFormat(familyCode) {
+      return familyCode.matches('^[A-Za-z0-9]{4,20}$');
+    }
 
+    // ---------------------------------------------------------------------------
+    // /families/{familyCode}
+    // ---------------------------------------------------------------------------
     match /families/{familyCode} {
       // Block listing all family codes.
       allow list: if false;
 
       // Allow reading the family root doc (needed for login / password check).
-      // LIMITATION: anyone who guesses a familyCode can read the password hash.
-      // Mitigated by: familyCode must be known (not guessable from the outside
-      // because listing is blocked), and passwords are validated app-side.
-      allow get: if true;
+      // RISK: anyone who guesses a familyCode can read the stored password.
+      // Mitigated by: listing is blocked (code cannot be enumerated), and
+      //               codes must match the format constraint above.
+      allow get: if validFamilyCodeFormat(familyCode);
 
-      // Family root may be created once with required fields only.
-      allow create: if request.resource.data.keys().hasOnly([
-                        'familyCode', 'familyPassword', 'createdAt', 'updatedAt', 'migratedFromLegacy'
-                      ])
+      // Family root may be created only with the required fields and a valid code format.
+      allow create: if validFamilyCodeFormat(familyCode)
+        && request.resource.data.keys().hasOnly([
+              'familyCode', 'familyPassword', 'createdAt', 'updatedAt', 'migratedFromLegacy'
+           ])
         && request.resource.data.familyCode == familyCode
         && request.resource.data.familyPassword is string
         && request.resource.data.familyPassword.size() >= 4
@@ -43,7 +55,8 @@ service cloud.firestore {
         && request.resource.data.updatedAt is number;
 
       // Allow updates but keep familyCode immutable; require valid password field.
-      allow update: if request.resource.data.familyCode == resource.data.familyCode
+      allow update: if familyOk(familyCode)
+        && request.resource.data.familyCode == resource.data.familyCode
         && request.resource.data.familyPassword is string
         && request.resource.data.familyPassword.size() >= 4
         && request.resource.data.updatedAt is number;
@@ -51,7 +64,9 @@ service cloud.firestore {
       // Never delete the family root doc from client.
       allow delete: if false;
 
-      // --- persons subcollection ---
+      // -------------------------------------------------------------------------
+      // /families/{familyCode}/persons/{docId}
+      // -------------------------------------------------------------------------
       match /persons/{docId} {
         allow read: if familyOk(familyCode);
         allow create: if familyOk(familyCode)
@@ -63,44 +78,79 @@ service cloud.firestore {
         allow delete: if familyOk(familyCode);
       }
 
-      // --- meds subcollection ---
+      // -------------------------------------------------------------------------
+      // /families/{familyCode}/meds/{docId}
+      // -------------------------------------------------------------------------
       match /meds/{docId} {
         allow read: if familyOk(familyCode);
         allow create: if familyOk(familyCode)
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0
-          && request.resource.data.personId is string;
+          && request.resource.data.personId is string
+          && request.resource.data.personId.size() > 0;
+        // personId must not change after creation.
         allow update: if familyOk(familyCode)
           && request.resource.data.name is string
-          && request.resource.data.name.size() > 0;
+          && request.resource.data.name.size() > 0
+          && request.resource.data.personId == resource.data.personId;
         allow delete: if familyOk(familyCode);
       }
 
-      // --- logs subcollection ---
+      // -------------------------------------------------------------------------
+      // /families/{familyCode}/logs/{docId}
+      // Logs are append-only audit records; updates and deletes are blocked.
+      // -------------------------------------------------------------------------
       match /logs/{docId} {
         allow read: if familyOk(familyCode);
         allow create: if familyOk(familyCode)
           && request.resource.data.medId is string
+          && request.resource.data.medId.size() > 0
           && request.resource.data.personId is string
-          && request.resource.data.date is string;
-        allow update: if familyOk(familyCode);
-        allow delete: if familyOk(familyCode);
+          && request.resource.data.personId.size() > 0
+          && request.resource.data.date is string
+          && request.resource.data.date.size() > 0
+          && request.resource.data.timestamp is number;
+        // Logs are immutable once written.
+        allow update: if false;
+        allow delete: if false;
       }
 
-      // --- meta subcollection (reorderCart etc.) ---
-      match /meta/{docId} {
-        allow read, write: if familyOk(familyCode);
+      // -------------------------------------------------------------------------
+      // /families/{familyCode}/meta/{docId}
+      // Known documents: reorderCart, familySettings.
+      // -------------------------------------------------------------------------
+      match /meta/reorderCart {
+        allow read: if familyOk(familyCode);
+        // reorderCart must contain an 'items' list field.
+        allow create, update: if familyOk(familyCode)
+          && request.resource.data.keys().hasOnly(['items', 'updatedAt'])
+          && request.resource.data.items is list;
+        allow delete: if false;
       }
 
-      // --- barcode catalog cache ---
+      match /meta/familySettings {
+        allow read: if familyOk(familyCode);
+        allow create, update: if familyOk(familyCode);
+        allow delete: if false;
+      }
+
+      // Block any other meta documents.
+      match /meta/{unknownDoc} {
+        allow read, write: if false;
+      }
+
+      // -------------------------------------------------------------------------
+      // /families/{familyCode}/barcodeCatalog/{docId}
+      // -------------------------------------------------------------------------
       match /barcodeCatalog/{docId} {
         allow read: if familyOk(familyCode);
         allow create, update: if familyOk(familyCode)
-          && request.resource.data.gtin is string;
+          && request.resource.data.gtin is string
+          && request.resource.data.gtin.size() > 0;
         allow delete: if familyOk(familyCode);
       }
 
-      // Block any other subcollection entirely.
+      // Block any unrecognised subcollection entirely.
       match /{unknownCollection}/{docId} {
         allow read, write: if false;
       }
