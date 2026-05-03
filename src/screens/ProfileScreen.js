@@ -5,7 +5,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
-import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime, getFamilyCode, getSnoozeWindowSettings, setSnoozeWindowSettings, changeFamilyPassword } from '../utils/storage';
+import { getMeds, getLogs, getPersons, markAsTaken, clearActivePerson, clearAllData, getDayRolloverTime, setDayRolloverTime, getFamilyCode, getSnoozeWindowSettings, setSnoozeWindowSettings, changeFamilyPassword, getLowStockThreshold, setLowStockThreshold } from '../utils/storage';
 import { db } from '../utils/firebase';
 import { collection, addDoc, getDocs, deleteDoc, doc, query } from 'firebase/firestore';
 import { LogOut, Pill, Clock, CheckCircle, Shield, Users, Check, Download, Upload } from 'lucide-react-native';
@@ -30,6 +30,7 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
   const [rolloverTime, setRolloverTime] = useState('00:00');
   const [snoozeBeforeMinutes, setSnoozeBeforeMinutes] = useState(60);
   const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
+  const [lowStockThreshold, setLowStockThresholdState] = useState(5);
   const [currentFamilyPassword, setCurrentFamilyPassword] = useState('');
   const [newFamilyPassword, setNewFamilyPassword] = useState('');
   const [newFamilyPasswordAgain, setNewFamilyPasswordAgain] = useState('');
@@ -50,10 +51,12 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
       const allPersons = await getPersons();
       const rt = await getDayRolloverTime();
       const snoozeCfg = await getSnoozeWindowSettings();
+      const lowStockValue = await getLowStockThreshold();
       setPersons(allPersons);
       setRolloverTime(rt);
       setSnoozeBeforeMinutes(snoozeCfg.beforeMinutes);
       setSnoozeAfterMinutes(snoozeCfg.afterMinutes);
+      setLowStockThresholdState(lowStockValue);
 
       const meds = allMeds.filter(m => m.personId === activePerson.id && m.isActive !== false);
       const today = allLogs.filter(l => l.personId === activePerson.id && l.date === todayStr);
@@ -334,6 +337,12 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
     });
   };
 
+  const handleLowStockThresholdChange = async (delta) => {
+    const next = Math.max(1, Math.min(999, lowStockThreshold + delta));
+    setLowStockThresholdState(next);
+    await setLowStockThreshold(next);
+  };
+
   const handleFamilyPasswordUpdate = async () => {
     if (!activePerson?.canSeeAll) return;
 
@@ -578,6 +587,21 @@ export default function ProfileScreen({ activePerson, onPersonChange, onFullLogo
             </View>
 
             <Text style={styles.rolloverHint}>{t('snoozeWindowExample')}</Text>
+          </View>
+
+          <Text style={styles.sectionTitle}>{t('lowStockThresholdTitle')}</Text>
+          <View style={styles.rolloverBox}>
+            <Text style={styles.rolloverText}>{t('lowStockThresholdDesc')}</Text>
+            <View style={styles.rolloverControls}>
+              <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleLowStockThresholdChange(-1)}>
+                <Text style={styles.rolloverBtnText}>-1</Text>
+              </TouchableOpacity>
+              <Text style={styles.rolloverTimeSmall}>{lowStockThreshold}</Text>
+              <TouchableOpacity style={styles.rolloverBtn} onPress={() => handleLowStockThresholdChange(1)}>
+                <Text style={styles.rolloverBtnText}>+1</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.rolloverHint}>{t('thresholdValue')}: {lowStockThreshold}</Text>
           </View>
         </>
       )}

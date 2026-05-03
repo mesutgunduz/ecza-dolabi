@@ -4,12 +4,10 @@ import {
   ActivityIndicator, Alert, Platform, ScrollView
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getMeds, getReorderCartItems, saveReorderCartItems, clearReorderCartItems } from '../utils/storage';
+import { getMeds, getReorderCartItems, saveReorderCartItems, clearReorderCartItems, getLowStockThreshold } from '../utils/storage';
 import { AlertCircle, ShoppingCart, Plus, Trash2, Check } from 'lucide-react-native';
 import { useTranslation } from '../i18n/LanguageContext';
 import { translateMedicineForm, translateMedicineUnit } from '../utils/medicineDisplay';
-
-const REORDER_THRESHOLD = 5;
 
 export default function ReorderScreen() {
   const { t } = useTranslation();
@@ -17,18 +15,29 @@ export default function ReorderScreen() {
   const [loading, setLoading] = useState(true);
   const [reorderList, setReorderList] = useState([]);
   const [cart, setCart] = useState([]);  // { id, name, form, unit, quantity }
+  const [lowStockThreshold, setLowStockThreshold] = useState(5);
+
+  const estimateDaysLeft = (med) => {
+    const quantity = parseFloat(med?.quantity || 0);
+    const consumePerUsage = parseFloat(med?.consumePerUsage || 1);
+    const dailyDose = parseFloat(med?.dailyDose || 0);
+    const dailyUsage = consumePerUsage > 0 && dailyDose > 0 ? consumePerUsage * dailyDose : 0;
+    if (!(quantity > 0) || !(dailyUsage > 0)) return null;
+    return Math.floor((quantity / dailyUsage) * 10) / 10;
+  };
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const m = await getMeds();
+      const [m, threshold] = await Promise.all([getMeds(), getLowStockThreshold()]);
       const savedCart = await getReorderCartItems();
       setMeds(m);
       setCart(Array.isArray(savedCart) ? savedCart : []);
+      setLowStockThreshold(threshold);
 
       const needsReorder = m.filter(med => {
         const qty = parseFloat(med.quantity || 0);
-        return med.isActive !== false && qty > 0 && qty < REORDER_THRESHOLD;
+        return med.isActive !== false && qty > 0 && qty < threshold;
       });
 
       setReorderList(needsReorder);
@@ -126,10 +135,11 @@ export default function ReorderScreen() {
           <>
             <View style={styles.headerSection}>
               <Text style={styles.sectionTitle}>{t('needsReorder')}</Text>
-              <Text style={styles.sectionSubtitle}>{reorderList.length} {t('lowStockCount')}</Text>
+              <Text style={styles.sectionSubtitle}>{reorderList.length} {t('lowStockCount')} ({t('thresholdValue')}: {lowStockThreshold})</Text>
             </View>
             {reorderList.map(item => {
               const inCart = cart.find(c => c.id === item.id);
+              const daysLeft = estimateDaysLeft(item);
               return (
                 <View key={item.id} style={styles.card}>
                   <View style={styles.medInfo}>
@@ -137,6 +147,7 @@ export default function ReorderScreen() {
                       <Text style={styles.medName}>{item.name}</Text>
                       <Text style={styles.medMeta}>{translateMedicineForm(item.form, t)} • {translateMedicineUnit(item.unit, t)}</Text>
                       <Text style={styles.mediStok}>{t('remainingStock')} {item.quantity} {translateMedicineUnit(item.unit, t)}</Text>
+                      {daysLeft != null && <Text style={styles.daysLeftText}>{t('estimatedDaysLeft')}: {daysLeft}</Text>}
                       {item.expiryDate && <Text style={styles.expiryText}>{t('expiryDate')}: {item.expiryDate}</Text>}
                     </View>
                     <View style={styles.qtyBox}>
@@ -195,6 +206,7 @@ const styles = StyleSheet.create({
   medName: { fontSize: 15, fontWeight: 'bold', color: '#111827' },
   medMeta: { fontSize: 11, color: '#6B7280', marginTop: 2 },
   mediStok: { fontSize: 12, fontWeight: '700', color: '#EF4444', marginTop: 4 },
+  daysLeftText: { fontSize: 11, color: '#B45309', marginTop: 4, fontWeight: '700' },
   expiryText: { fontSize: 10, color: '#9CA3AF', marginTop: 2, fontStyle: 'italic' },
   qtyBox: { backgroundColor: '#FEF3C7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', alignItems: 'center', minWidth: 60 },
   qtyText: { fontSize: 20, fontWeight: 'bold', color: '#B45309' },

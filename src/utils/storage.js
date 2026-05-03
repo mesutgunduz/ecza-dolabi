@@ -248,9 +248,11 @@ export const NOTIFICATION_TARGET_PERSON_IDS_KEY = 'NOTIFICATION_TARGET_PERSON_ID
 export const DAY_ROLLOVER_KEY = 'DAY_ROLLOVER_TIME';
 export const SNOOZE_BEFORE_MINUTES_KEY = 'SNOOZE_BEFORE_MINUTES';
 export const SNOOZE_AFTER_MINUTES_KEY = 'SNOOZE_AFTER_MINUTES';
+export const LOW_STOCK_THRESHOLD_KEY = 'LOW_STOCK_THRESHOLD';
 const LEGACY_REORDER_CART_KEY = 'REORDER_CART_ITEMS';
 const DEFAULT_SNOOZE_BEFORE_MINUTES = 60;
 const DEFAULT_SNOOZE_AFTER_MINUTES = 120;
+const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
 const getReorderCartDocRef = (code) => doc(db, 'families', normalizeFamilyCode(code), 'meta', 'reorderCart');
 
@@ -273,6 +275,7 @@ export const clearAllData = async () => {
   await AsyncStorage.removeItem(DAY_ROLLOVER_KEY);
   await AsyncStorage.removeItem(SNOOZE_BEFORE_MINUTES_KEY);
   await AsyncStorage.removeItem(SNOOZE_AFTER_MINUTES_KEY);
+  await AsyncStorage.removeItem(LOW_STOCK_THRESHOLD_KEY);
 };
 
 const sanitizePersonIdList = (personIds) => {
@@ -327,6 +330,15 @@ const clampSnoozeMinutes = (value, fallback) => {
   return rounded;
 };
 
+const clampLowStockThreshold = (value, fallback = DEFAULT_LOW_STOCK_THRESHOLD) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.round(n);
+  if (rounded < 1) return 1;
+  if (rounded > 999) return 999;
+  return rounded;
+};
+
 export const setSnoozeWindowSettings = async ({ beforeMinutes, afterMinutes }) => {
   const before = clampSnoozeMinutes(beforeMinutes, DEFAULT_SNOOZE_BEFORE_MINUTES);
   const after = clampSnoozeMinutes(afterMinutes, DEFAULT_SNOOZE_AFTER_MINUTES);
@@ -345,6 +357,17 @@ export const getSnoozeWindowSettings = async () => {
   const afterMinutes = clampSnoozeMinutes(afterRaw, DEFAULT_SNOOZE_AFTER_MINUTES);
 
   return { beforeMinutes, afterMinutes };
+};
+
+export const setLowStockThreshold = async (value) => {
+  const threshold = clampLowStockThreshold(value);
+  await AsyncStorage.setItem(LOW_STOCK_THRESHOLD_KEY, String(threshold));
+  return threshold;
+};
+
+export const getLowStockThreshold = async () => {
+  const raw = await AsyncStorage.getItem(LOW_STOCK_THRESHOLD_KEY);
+  return clampLowStockThreshold(raw, DEFAULT_LOW_STOCK_THRESHOLD);
 };
 
 export const getReorderCartItems = async () => {
