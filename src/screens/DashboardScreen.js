@@ -4,7 +4,7 @@ import {
   ActivityIndicator, Alert, Platform, TextInput, AppState
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds, getPendingOfflineOpsCount, getPendingOfflineOpsPreview } from '../utils/storage';
+import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds, getPendingOfflineOpsCount, getPendingOfflineOpsPreview, getLowStockThreshold } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import * as Notifications from 'expo-notifications';
 import { getPersistedSnoozedReminders, scheduleReminderSnooze } from '../utils/notifications';
@@ -257,8 +257,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
     }, []);
   }, [filteredMeds, medUsageCounts, persons, activePerson, rolloverMinutes, snoozeAfterMinutes, notificationTargetIds]);
 
-  const sortedMeds = useMemo(() => {
-    const nowLogicalMinutes = getLogicalNowMinutes(new Date(), rolloverMinutes);
+  const sortedMeds = useMemo(() => {    const nowLogicalMinutes = getLogicalNowMinutes(new Date(), rolloverMinutes);
 
     const getRank = (med) => {
       const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson?.id;
@@ -304,6 +303,31 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       return String(a.name || '').localeCompare(String(b.name || ''), 'tr-TR');
     });
   }, [filteredMeds, medUsageCounts, activePerson?.id, logicalWeekDay, rolloverMinutes, snoozeAfterMinutes, snoozeBeforeMinutes]);
+
+  const personColorMap = useMemo(() => {
+    const map = {};
+    persons.forEach(p => { if (p.color) map[p.id] = p.color; });
+    return map;
+  }, [persons]);
+
+  const todaySummary = useMemo(() => {
+    const scheduledMeds = filteredMeds.filter(med => {
+      const plannedDose = parseInt(med.dailyDose, 10) || 0;
+      if (plannedDose <= 0) return false;
+      const selectedWeekDays = Array.isArray(med.weeklyDays)
+        ? med.weeklyDays.map(d => Number(d)).filter(d => Number.isInteger(d) && d >= 0 && d <= 6)
+        : [];
+      return med.scheduleType !== 'weekly' || selectedWeekDays.includes(logicalWeekDay);
+    });
+    const total = scheduledMeds.length;
+    const takerId = activePerson?.id;
+    const doneCount = scheduledMeds.filter(med => {
+      const id = (med.personId && med.personId !== 'all') ? med.personId : takerId;
+      return (medUsageCounts[`${med.id}-${id}`] || 0) >= (parseInt(med.dailyDose, 10) || 1);
+    }).length;
+    const missedCount = missedDoseItems.length;
+    return { total, doneCount, missedCount };
+  }, [filteredMeds, medUsageCounts, missedDoseItems, logicalWeekDay, activePerson?.id]);
 
   const handleDeleteExpired = (medId) => {
     const pDelete = async () => {
@@ -405,12 +429,29 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         } catch (_) {}
 
         // Optimistic UI update for immediate feedback on dashboard
+        const prevQty = parseFloat(med.quantity || 0);
+        const nextQtyOpt = Math.max(0, prevQty - consumeAmount);
         setMeds((prev) => prev.map((item) => {
           if (item.id !== med.id) return item;
-          const currentQty = parseFloat(item.quantity || 0);
-          const nextQty = Math.max(0, currentQty - consumeAmount);
-          return { ...item, quantity: String(nextQty) };
+          return { ...item, quantity: String(nextQtyOpt) };
         }));
+
+        // Low stock notification: fire only when stock crosses the threshold
+        try {
+          const threshold = await getLowStockThreshold();
+          if (prevQty > threshold && nextQtyOpt <= threshold) {
+            await Notifications.scheduleNotificationAsync({
+              content: {
+                title: `⚠️ ${t('lowStockNotifTitle')}`,
+                body: nextQtyOpt === 0
+                  ? `${med.name} ${t('outOfStockNotifBody')}`
+                  : `${med.name}: ${nextQtyOpt} ${translateMedicineUnit(med.unit, t)} ${t('lowStockNotifBody')}`,
+                data: { type: 'low-stock', medId: med.id },
+              },
+              trigger: null,
+            });
+          }
+        } catch (_) {}
 
         setLogs((prev) => [
           {
@@ -518,7 +559,27 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
           </TouchableOpacity>
         </View>
 
-        {/* Arama Çubuğu */}
+        {/* Bugün Özet Kartı */}
+        {todaySummary.total > 0 && (
+          <View style={styles.todaySummaryCard}>
+            <View style={styles.todaySummaryItem}>
+              <Text style={styles.todaySummaryNum}>{todaySummary.total}</Text>
+              <Text style={styles.todaySummaryLabel}>{t('todaySummaryMeds')}</Text>
+            </View>
+            <View style={styles.todaySummarySep} />
+            <View style={styles.todaySummaryItem}>
+              <Text style={[styles.todaySummaryNum, { color: '#059669' }]}>{todaySummary.doneCount}</Text>
+              <Text style={styles.todaySummaryLabel}>{t('todaySummaryTaken')}</Text>
+            </View>
+            <View style={styles.todaySummarySep} />
+            <View style={styles.todaySummaryItem}>
+              <Text style={[styles.todaySummaryNum, todaySummary.missedCount > 0 && { color: '#EF4444' }]}>{todaySummary.missedCount}</Text>
+              <Text style={styles.todaySummaryLabel}>{t('todaySummaryMissed')}</Text>
+            </View>
+          </View>
+        )}
+
+        {/* Arama Çubuğu */}}
         <View style={styles.searchBox}>
           <Search color="#9CA3AF" size={20} />
           <TextInput 
@@ -571,10 +632,14 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
              {persons.map(p => (
                <TouchableOpacity 
                  key={p.id} 
-                 style={[styles.chip, filterPerson === p.id && styles.chipActive]} 
+                 style={[
+                   styles.chip,
+                   filterPerson === p.id && styles.chipActive,
+                   filterPerson === p.id && p.color && { backgroundColor: p.color, borderColor: p.color },
+                 ]} 
                  onPress={() => setFilterPerson(p.id)}
                >
-                 <Text style={[styles.chipText, filterPerson === p.id && {color: '#fff'}]}>{p.name}</Text>
+                 <Text style={[styles.chipText, filterPerson === p.id && { color: '#fff' }]}>{p.name}</Text>
                </TouchableOpacity>
              ))}
           </ScrollView>
@@ -655,7 +720,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
           const snoozedForName = activePerson?.canSeeAll ? String(snoozeInfo?.targetPersonName || '').trim() : '';
 
           return (
-            <View key={med.id} style={styles.medCard}>
+            <View key={med.id} style={[styles.medCard, { borderLeftWidth: 4, borderLeftColor: personColorMap[med.personId] || '#E5E7EB' }]}>
               <View style={styles.medTop}>
                 <View style={[styles.iconBox, {backgroundColor: med.form === 'Şurup' ? '#FDF2F8' : '#ECFDF5'}]}>
                   {med.form === 'Şurup' ? <Text style={{fontSize: 20}}>🥤</Text> : <Pill color="#059669" size={24} />}
@@ -844,5 +909,10 @@ const styles = StyleSheet.create({
   emptyBox: { padding: 40, alignItems: 'center' },
   emptyText: { color: '#9CA3AF', fontStyle: 'italic' },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 12, marginBottom: 20, borderWidth: 1, borderColor: '#E5E7EB', height: 46 },
-  searchInput: { flex: 1, marginLeft: 8, fontSize: 16, color: '#111827' }
+  searchInput: { flex: 1, marginLeft: 8, fontSize: 16, color: '#111827' },
+  todaySummaryCard: { flexDirection: 'row', backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 16, elevation: 2, justifyContent: 'space-around', alignItems: 'center' },
+  todaySummaryItem: { alignItems: 'center', flex: 1 },
+  todaySummaryNum: { fontSize: 24, fontWeight: '900', color: '#111827' },
+  todaySummaryLabel: { fontSize: 11, color: '#6B7280', marginTop: 2, textAlign: 'center' },
+  todaySummarySep: { width: 1, height: 36, backgroundColor: '#E5E7EB' },
 });

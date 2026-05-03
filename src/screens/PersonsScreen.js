@@ -9,6 +9,7 @@ import { useTranslation } from '../i18n/LanguageContext';
 const AVATARS = ['🧑', '👨', '👩', '👱‍♂️', '👱‍♀️', '🧔', '👦', '👧', '👴', '👵', '👶', '👤'];
 const RELATIONS = ['Ben', 'Eşim', 'Oğlum', 'Kızım', 'Diğer'];
 const GENDERS = ['Erkek', 'Kadın'];
+export const PERSON_COLORS = ['#059669', '#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#EF4444', '#06B6D4', '#84CC16'];
 
 export default function PersonsScreen({ activePerson, onNotificationTargetsChange }) {
   const { t } = useTranslation();
@@ -25,6 +26,7 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
   const [canSeeAll, setCanSeeAll] = useState(false);
   const [receivesNotifications, setReceivesNotifications] = useState(true);
   const [pin, setPin] = useState('');
+  const [color, setColor] = useState(PERSON_COLORS[0]);
   const [showDatePicker, setShowDatePicker] = useState(false);
 
   const translateRelation = (value) => {
@@ -87,6 +89,7 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
       setCanSeeAll(person.canSeeAll === true);
       setReceivesNotifications(person.receivesNotifications !== false);
       setPin(person.pin || '');
+      setColor(person.color || PERSON_COLORS[0]);
     } else {
       setEditingId(null);
       setName('');
@@ -97,6 +100,10 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
       setCanSeeAll(false);
       setReceivesNotifications(true);
       setPin('');
+      // Auto-pick an unused color
+      const usedColors = persons.map(p => p.color).filter(Boolean);
+      const freeColor = PERSON_COLORS.find(c => !usedColors.includes(c)) || PERSON_COLORS[0];
+      setColor(freeColor);
     }
     setModalVisible(true);
   };
@@ -126,6 +133,7 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
       canSeeAll,
       receivesNotifications,
       pin: canSeeAll ? pin : '',
+      color,
     };
     if (editingId) { await editPerson(editingId, payload); }
     else { await addPerson(payload); }
@@ -193,7 +201,7 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
           const age = calculateAge(item.birthdate);
           const isFemale = item.gender === 'Kadın';
           return (
-            <View style={[styles.card, { borderLeftColor: isFemale ? '#EC4899' : '#3B82F6', borderLeftWidth: 4 }]}>
+            <View style={[styles.card, { borderLeftColor: item.color || (isFemale ? '#EC4899' : '#3B82F6'), borderLeftWidth: 4 }]}>
               <View style={styles.avatarCircle}><Text style={styles.avatarEmoji}>{item.avatar || '👤'}</Text></View>
               <View style={styles.cardContent}>
                 <Text style={styles.nameText}>{item.name}</Text>
@@ -244,6 +252,20 @@ export default function PersonsScreen({ activePerson, onNotificationTargetsChang
               <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
                 <Text style={styles.formTitle}>{editingId ? t('editPerson') : t('newPerson')}</Text>
                 <TouchableOpacity onPress={() => setModalVisible(false)}><X color="#6B7280" size={24}/></TouchableOpacity>
+              </View>
+              <Text style={styles.label}>{t('personColorLabel')}:</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginBottom: 14 }}>
+                {PERSON_COLORS.map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    onPress={() => setColor(c)}
+                    style={[
+                      styles.colorCircle,
+                      { backgroundColor: c },
+                      color === c && styles.colorCircleActive,
+                    ]}
+                  />
+                ))}
               </View>
               <Text style={styles.label}>{t('avatarSelection')}:</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{marginBottom: 10}}>
@@ -399,5 +421,7 @@ const styles = StyleSheet.create({
   pinBox: { backgroundColor: '#FEF3C7', borderRadius: 10, padding: 12, marginBottom: 20, borderWidth: 1, borderColor: '#FDE68A' },
   pinInfo: { fontSize: 11, color: '#92400E', fontStyle: 'italic', marginTop: -10, marginBottom: 10 },
   webDateBox: { backgroundColor: '#F3F4F6', padding: 10, borderRadius: 8, marginTop: 10, borderWidth: 1, borderColor: '#D1D5DB' },
-  miniOkBtn: { backgroundColor: '#059669', padding: 8, borderRadius: 6, alignItems: 'center', marginTop: 5 }
+  miniOkBtn: { backgroundColor: '#059669', padding: 8, borderRadius: 6, alignItems: 'center', marginTop: 5 },
+  colorCircle: { width: 34, height: 34, borderRadius: 17, marginRight: 10, marginBottom: 10, borderWidth: 3, borderColor: 'transparent' },
+  colorCircleActive: { borderColor: '#111827', transform: [{ scale: 1.1 }] },
 });
