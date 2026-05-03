@@ -221,24 +221,19 @@ export default function App() {
   }, [isAuthenticated, activePerson?.id, activePerson?.receivesNotifications, notificationTargetsRefreshKey]);
 
   useEffect(() => {
-    // TEMPORARY DEBUG: Disable offline ops flush
     const flushQueue = async () => {
-      console.log('[DEBUG] Offline queue flush triggered but disabled');
-      /* 
       if (!isAuthenticated) return;
       const result = await flushPendingOfflineOps();
       if (result?.processed > 0) {
         setDataRefreshKey((k) => k + 1);
       }
-      */
     };
 
-    // flushQueue();
+    flushQueue();
     const sub = AppState.addEventListener('change', (state) => {
-      console.log('[DEBUG] AppState changed to:', state);
-      // if (state === 'active') {
-      //   flushQueue();
-      // }
+      if (state === 'active') {
+        flushQueue();
+      }
     });
 
     return () => {

@@ -121,12 +121,10 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
   useFocusEffect(useCallback(() => { loadData(); }, [loadData, dataRefreshKey]));
 
   useEffect(() => {
-    // TEMPORARY DEBUG: Disable AppState listener
     const subscription = AppState.addEventListener('change', (nextState) => {
-      console.log('[DEBUG] AppState changed to:', nextState);
-      // if (nextState === 'active') {
-      //   loadData();
-      // }
+      if (nextState === 'active') {
+        loadData();
+      }
     });
 
     return () => {
