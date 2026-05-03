@@ -366,7 +366,10 @@ export default function MedsScreen({ activePerson }) {
   };
 
   const handleBarcodeScanned = async ({ data }) => {
+    if (!cameraVisible) return; // Ignore if already closed
     setCameraVisible(false);
+    setOcrLoading(false);
+    cameraRef.current = null;
 
     try {
       const parsed = parseITSBarcode(data);
@@ -394,6 +397,8 @@ export default function MedsScreen({ activePerson }) {
       setOcrLoading(true);
       const photo = await cameraRef.current?.takePictureAsync({ quality: 0.7 });
       setCameraVisible(false);
+      setOcrLoading(false);
+      cameraRef.current = null;
 
       if (!photo?.uri) {
         Alert.alert(t('error'), t('photoNotTaken'));
@@ -443,7 +448,7 @@ export default function MedsScreen({ activePerson }) {
     } catch (error) {
       console.error('OCR failed:', error);
       Alert.alert(t('error'), t('ocrFailed'));
-    } finally {
+      setCameraVisible(false);
       setOcrLoading(false);
     }
   };
@@ -815,48 +820,50 @@ export default function MedsScreen({ activePerson }) {
         </SafeAreaView>
       </Modal>
 
-      <Modal visible={cameraVisible} animationType="slide">
-        <View style={styles.cameraModal}>
-          {cameraPermission == null ? (
-            <View style={styles.cameraFallback}>
-              <ActivityIndicator color="#fff" />
-              <Text style={styles.cameraFallbackText}>{t('cameraLoading')}</Text>
-            </View>
-          ) : !cameraPermission.granted ? (
-            <View style={styles.cameraFallback}>
-              <Text style={styles.cameraFallbackText}>{t('cameraNotGranted')}</Text>
-              <TouchableOpacity style={styles.captureBtn} onPress={ensureCameraPermission}>
-                <Text style={styles.captureBtnText}>{t('requestPermAgain')}</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <CameraView
-              ref={cameraRef}
-              style={StyleSheet.absoluteFill}
-              facing="back"
-              onMountError={() => {
-                Alert.alert(t('error'), t('cameraOpenError'));
-                setCameraVisible(false);
-              }}
-              onBarcodeScanned={cameraMode === 'barcode' ? handleBarcodeScanned : undefined}
-              barcodeScannerSettings={{ barcodeTypes: ['datamatrix', 'qr', 'code128', 'ean13', 'ean8'] }}
-            />
-          )}
-          <View style={styles.scannerOverlay}>
-            <View style={styles.scannerCutout} />
-            {cameraMode === 'ocr' ? (
-              <TouchableOpacity style={styles.captureBtn} onPress={takeOCRPhoto} disabled={ocrLoading}>
-                {ocrLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.captureBtnText}>{t('capturePhoto')}</Text>}
-              </TouchableOpacity>
+      {cameraVisible && (
+        <Modal visible={cameraVisible} animationType="slide" onDismiss={() => { setCameraVisible(false); cameraRef.current = null; }}>
+          <View style={styles.cameraModal}>
+            {cameraPermission == null ? (
+              <View style={styles.cameraFallback}>
+                <ActivityIndicator color="#fff" />
+                <Text style={styles.cameraFallbackText}>{t('cameraLoading')}</Text>
+              </View>
+            ) : !cameraPermission.granted ? (
+              <View style={styles.cameraFallback}>
+                <Text style={styles.cameraFallbackText}>{t('cameraNotGranted')}</Text>
+                <TouchableOpacity style={styles.captureBtn} onPress={ensureCameraPermission}>
+                  <Text style={styles.captureBtnText}>{t('requestPermAgain')}</Text>
+                </TouchableOpacity>
+              </View>
             ) : (
-              <Text style={styles.overlayHint}>{t('barcodeAutoReadHint')}</Text>
+              <CameraView
+                ref={cameraRef}
+                style={StyleSheet.absoluteFill}
+                facing="back"
+                onMountError={() => {
+                  Alert.alert(t('error'), t('cameraOpenError'));
+                  setCameraVisible(false);
+                }}
+                onBarcodeScanned={cameraMode === 'barcode' ? handleBarcodeScanned : undefined}
+                barcodeScannerSettings={{ barcodeTypes: ['datamatrix', 'qr', 'code128', 'ean13', 'ean8'] }}
+              />
             )}
-            <TouchableOpacity style={styles.closeScan} onPress={() => setCameraVisible(false)}>
-              <Text style={styles.closeScanText}>{t('cancel')}</Text>
-            </TouchableOpacity>
+            <View style={styles.scannerOverlay}>
+              <View style={styles.scannerCutout} />
+              {cameraMode === 'ocr' ? (
+                <TouchableOpacity style={styles.captureBtn} onPress={takeOCRPhoto} disabled={ocrLoading}>
+                  {ocrLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.captureBtnText}>{t('capturePhoto')}</Text>}
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.overlayHint}>{t('barcodeAutoReadHint')}</Text>
+              )}
+              <TouchableOpacity style={styles.closeScan} onPress={() => setCameraVisible(false)}>
+                <Text style={styles.closeScanText}>{t('cancel')}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
     </View>
   );
 }
