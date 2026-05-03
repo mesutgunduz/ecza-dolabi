@@ -539,6 +539,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
               minute: '2-digit',
             })
             : null;
+          const snoozedForName = activePerson?.canSeeAll ? String(snoozeInfo?.targetPersonName || '').trim() : '';
 
           return (
             <View key={med.id} style={styles.medCard}>
@@ -575,9 +576,14 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
                   {nextReminderLabel && (
                     <View style={styles.snoozedInfoTag}>
                       <Clock size={11} color="#92400E" />
-                      <Text style={styles.snoozedInfoText}>
-                        {t('snoozedNextReminder')}: {nextReminderLabel}
-                      </Text>
+                      <View style={styles.snoozedInfoTextWrap}>
+                        <Text style={styles.snoozedInfoText}>
+                          {t('snoozedNextReminder')}: {nextReminderLabel}
+                        </Text>
+                        {!!snoozedForName && (
+                          <Text style={styles.snoozedForText}>{t('snoozedFor')}: {snoozedForName}</Text>
+                        )}
+                      </View>
                     </View>
                   )}
 
@@ -667,7 +673,9 @@ const styles = StyleSheet.create({
   timeTag: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECFDF5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginRight: 5, marginBottom: 2, borderWidth: 1, borderColor: '#D1D5DB' },
   timeTagText: { fontSize: 10, color: '#059669', fontWeight: 'bold', marginLeft: 3 },
   snoozedInfoTag: { flexDirection: 'row', alignItems: 'center', marginTop: 8, backgroundColor: '#FEF3C7', borderColor: '#F59E0B', borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5 },
-  snoozedInfoText: { marginLeft: 5, fontSize: 11, color: '#92400E', fontWeight: '700' },
+  snoozedInfoTextWrap: { marginLeft: 5 },
+  snoozedInfoText: { fontSize: 11, color: '#92400E', fontWeight: '700' },
+  snoozedForText: { fontSize: 10, color: '#B45309', marginTop: 2 },
   notPlannedTag: { marginTop: 8, backgroundColor: '#FFEDD5', borderWidth: 1, borderColor: '#FDBA74', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8 },
   notPlannedTagText: { fontSize: 11, color: '#9A3412', fontWeight: '700' },
   emptyBox: { padding: 40, alignItems: 'center' },
