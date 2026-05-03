@@ -110,6 +110,14 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
     }
   }, [activePerson, loadSnoozedReminderState, loadPendingSyncItems]);
 
+  const formatClockFromLogicalMinutes = (minutes) => {
+    if (!Number.isFinite(minutes)) return '--:--';
+    const normalized = ((Math.round(minutes) % 1440) + 1440) % 1440;
+    const hh = String(Math.floor(normalized / 60)).padStart(2, '0');
+    const mm = String(normalized % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
+
   useFocusEffect(useCallback(() => { loadData(); }, [loadData, dataRefreshKey]));
 
   useEffect(() => {
@@ -530,7 +538,8 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         ) : filteredMeds.map(med => {
           const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
           const count = medUsageCounts[`${med.id}-${takerId}`] || 0;
-          const isLimitReached = med.dailyDose && count >= med.dailyDose;
+          const plannedDose = parseInt(med.dailyDose, 10) || 0;
+          const isLimitReached = plannedDose > 0 && count >= plannedDose;
           const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes.filter(Boolean) : [];
           const nowLogicalMinutes = getLogicalNowMinutes(new Date(), rolloverMinutes);
           const selectedWeekDays = Array.isArray(med.weeklyDays)
@@ -545,10 +554,46 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
             })
             .filter((minutes) => minutes !== null)
             .sort((a, b) => a - b);
-          const pendingSlots = reminderSlots.slice(count, Math.max(count, parseInt(med.dailyDose, 10) || reminderSlots.length));
+          const pendingSlots = reminderSlots.slice(count, Math.max(count, plannedDose || reminderSlots.length));
           const canSnoozeNow = isScheduledToday && !isLimitReached && pendingSlots.some(
             (slot) => nowLogicalMinutes >= (slot - snoozeBeforeMinutes) && nowLogicalMinutes <= (slot + snoozeAfterMinutes)
           );
+          const missedSlotsCount = pendingSlots.filter((slot) => nowLogicalMinutes > (slot + snoozeAfterMinutes)).length;
+          const nextPendingSlot = pendingSlots[0];
+          let usageStatus = null;
+
+          if (isScheduledToday && plannedDose > 0) {
+            if (isLimitReached) {
+              usageStatus = {
+                key: 'done',
+                text: t('usageStatusDone'),
+                style: styles.statusDone,
+                textStyle: styles.statusDoneText,
+              };
+            } else if (missedSlotsCount > 0) {
+              usageStatus = {
+                key: 'missed',
+                text: `${t('usageStatusMissed')} (${missedSlotsCount})`,
+                style: styles.statusMissed,
+                textStyle: styles.statusMissedText,
+              };
+            } else if (canSnoozeNow) {
+              usageStatus = {
+                key: 'due',
+                text: t('usageStatusDue'),
+                style: styles.statusDue,
+                textStyle: styles.statusDueText,
+              };
+            } else if (Number.isFinite(nextPendingSlot)) {
+              usageStatus = {
+                key: 'upcoming',
+                text: `${t('usageStatusUpcoming')} ${formatClockFromLogicalMinutes(nextPendingSlot)}`,
+                style: styles.statusUpcoming,
+                textStyle: styles.statusUpcomingText,
+              };
+            }
+          }
+
           const snoozeInfo = snoozedReminderByMed[med.id];
           const nextReminderDate = snoozeInfo?.triggerDate;
           const nextReminderLabel = nextReminderDate
@@ -580,6 +625,12 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
                     )}
                   </View>
                   <Text style={styles.medSub}>{t('stock')} {med.quantity} {translateMedicineUnit(med.unit, t)} | {t('today')} {count}/{med.dailyDose || '-'}</Text>
+
+                  {usageStatus && (
+                    <View style={[styles.usageStatusTag, usageStatus.style]}>
+                      <Text style={[styles.usageStatusText, usageStatus.textStyle]}>{usageStatus.text}</Text>
+                    </View>
+                  )}
                   
                   {/* Alarm Saatleri */}
                   {reminderTimes.length > 0 && (
@@ -716,6 +767,16 @@ const styles = StyleSheet.create({
   badge: { marginLeft: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   badgeText: { fontSize: 10, fontWeight: 'bold' },
   medSub: { fontSize: 12, color: '#6B7280' },
+  usageStatusTag: { alignSelf: 'flex-start', marginTop: 6, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 4, borderWidth: 1 },
+  usageStatusText: { fontSize: 10, fontWeight: '700' },
+  statusDone: { backgroundColor: '#ECFDF5', borderColor: '#10B981' },
+  statusDoneText: { color: '#047857' },
+  statusDue: { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' },
+  statusDueText: { color: '#B45309' },
+  statusMissed: { backgroundColor: '#FEE2E2', borderColor: '#EF4444' },
+  statusMissedText: { color: '#B91C1C' },
+  statusUpcoming: { backgroundColor: '#E0F2FE', borderColor: '#38BDF8' },
+  statusUpcomingText: { color: '#0369A1' },
   medBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingTop: 12 },
   infoText: { fontSize: 12, color: '#4B5563' },
   actionRow: { flexDirection: 'row', alignItems: 'center' },
