@@ -576,7 +576,7 @@ export const deleteLog = async (id) => {
 };
 
 // --- ACTIONS ---
-const executeMarkAsTaken = async ({ medId, takerId, consumeAmt = 1, medName = null, takerName = null }) => {
+const executeMarkAsTaken = async ({ medId, takerId, consumeAmt = 1, medName = null, takerName = null, occurredAt = null }) => {
   try {
     const code = await getFamilyCode();
     if (!code) throw new Error("Aile kodu bulunamadı.");
@@ -600,7 +600,8 @@ const executeMarkAsTaken = async ({ medId, takerId, consumeAmt = 1, medName = nu
       await editMed(medId, { quantity: newQty.toString() });
     }
 
-    const now = new Date();
+    const eventTs = Number.isFinite(Number(occurredAt)) ? Number(occurredAt) : Date.now();
+    const now = new Date(eventTs);
     const dateStr = `${now.getDate().toString().padStart(2,'0')}.${(now.getMonth()+1).toString().padStart(2,'0')}.${now.getFullYear()}`;
     const timeStr = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
     
@@ -611,7 +612,7 @@ const executeMarkAsTaken = async ({ medId, takerId, consumeAmt = 1, medName = nu
        takerName: finalTakerName,
        date: dateStr,
        time: timeStr,
-       timestamp: now.getTime(),
+       timestamp: eventTs,
        dosage: consumeAmt.toString()
     });
 
@@ -622,7 +623,7 @@ const executeMarkAsTaken = async ({ medId, takerId, consumeAmt = 1, medName = nu
 };
 
 export const markAsTaken = async (medId, takerId, consumeAmt = 1, medName = null, takerName = null) => {
-  const payload = { medId, takerId, consumeAmt, medName, takerName };
+  const payload = { medId, takerId, consumeAmt, medName, takerName, occurredAt: Date.now() };
   const result = await executeMarkAsTaken(payload);
   if (result.ok) return true;
 
