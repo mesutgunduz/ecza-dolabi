@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  Alert, Modal, TextInput, ScrollView, Platform, ActivityIndicator, Switch, StatusBar
+  Alert, Modal, TextInput, ScrollView, Platform, ActivityIndicator, Switch, StatusBar, AppState
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -78,7 +78,28 @@ export default function MedsScreen({ activePerson }) {
     }
   };
 
-  useFocusEffect(useCallback(() => { loadData(); }, []));
+  useFocusEffect(useCallback(() => {
+    loadData();
+    return () => {
+      // Ensure camera preview is closed when leaving this tab.
+      setCameraVisible(false);
+      setOcrLoading(false);
+    };
+  }, []));
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      // If app goes inactive/background while scanner is open, close it.
+      if (nextState !== 'active') {
+        setCameraVisible(false);
+        setOcrLoading(false);
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, []);
 
   const handleTypeChange = (type) => {
     setFormType(type);
