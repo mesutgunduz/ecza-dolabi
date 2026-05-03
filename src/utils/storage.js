@@ -255,6 +255,7 @@ const DEFAULT_SNOOZE_AFTER_MINUTES = 120;
 const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
 const getReorderCartDocRef = (code) => doc(db, 'families', normalizeFamilyCode(code), 'meta', 'reorderCart');
+const getFamilySettingsDocRef = (code) => doc(db, 'families', normalizeFamilyCode(code), 'meta', 'familySettings');
 
 export const setActivePerson = async (personId) => {
   if (personId) await AsyncStorage.setItem(ACTIVE_PERSON_KEY, personId);
@@ -362,12 +363,48 @@ export const getSnoozeWindowSettings = async () => {
 export const setLowStockThreshold = async (value) => {
   const threshold = clampLowStockThreshold(value);
   await AsyncStorage.setItem(LOW_STOCK_THRESHOLD_KEY, String(threshold));
+
+  try {
+    const code = await getFamilyCode();
+    if (code) {
+      const settingsRef = getFamilySettingsDocRef(code);
+      await runFirestoreWrite('setLowStockThreshold.setDoc', () => setDoc(settingsRef, {
+        lowStockThreshold: threshold,
+        updatedAt: Date.now(),
+      }, { merge: true }));
+    }
+  } catch (e) {
+    // Keep local value even if cloud write is unavailable.
+    console.error('setLowStockThreshold cloud sync failed:', e);
+  }
+
   return threshold;
 };
 
 export const getLowStockThreshold = async () => {
-  const raw = await AsyncStorage.getItem(LOW_STOCK_THRESHOLD_KEY);
-  return clampLowStockThreshold(raw, DEFAULT_LOW_STOCK_THRESHOLD);
+  const localRaw = await AsyncStorage.getItem(LOW_STOCK_THRESHOLD_KEY);
+  const localThreshold = clampLowStockThreshold(localRaw, DEFAULT_LOW_STOCK_THRESHOLD);
+
+  try {
+    const code = await getFamilyCode();
+    if (!code) return localThreshold;
+
+    const settingsRef = getFamilySettingsDocRef(code);
+    const snap = await getDoc(settingsRef);
+    if (!snap.exists()) return localThreshold;
+
+    const cloudValue = snap.data()?.lowStockThreshold;
+    const cloudThreshold = clampLowStockThreshold(cloudValue, localThreshold);
+
+    if (cloudThreshold !== localThreshold) {
+      await AsyncStorage.setItem(LOW_STOCK_THRESHOLD_KEY, String(cloudThreshold));
+    }
+
+    return cloudThreshold;
+  } catch (e) {
+    console.error('getLowStockThreshold cloud read failed:', e);
+    return localThreshold;
+  }
 };
 
 export const getReorderCartItems = async () => {
