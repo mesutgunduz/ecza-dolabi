@@ -257,6 +257,54 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
     }, []);
   }, [filteredMeds, medUsageCounts, persons, activePerson, rolloverMinutes, snoozeAfterMinutes, notificationTargetIds]);
 
+  const sortedMeds = useMemo(() => {
+    const nowLogicalMinutes = getLogicalNowMinutes(new Date(), rolloverMinutes);
+
+    const getRank = (med) => {
+      const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson?.id;
+      const count = medUsageCounts[`${med.id}-${takerId}`] || 0;
+      const plannedDose = parseInt(med.dailyDose, 10) || 0;
+      const isLimitReached = plannedDose > 0 && count >= plannedDose;
+
+      const selectedWeekDays = Array.isArray(med.weeklyDays)
+        ? med.weeklyDays.map((d) => Number(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+        : [];
+      const isScheduledToday = med.scheduleType !== 'weekly' || selectedWeekDays.includes(logicalWeekDay);
+
+      if (!isScheduledToday || plannedDose <= 0) return 5;
+      if (isLimitReached) return 4;
+
+      const reminderTimes = Array.isArray(med.reminderTimes) ? med.reminderTimes.filter(Boolean) : [];
+      const reminderSlots = reminderTimes
+        .map((t) => {
+          const minutes = parseClockTimeToMinutes(t);
+          if (minutes == null) return null;
+          return adjustMinutesForRollover(minutes, rolloverMinutes);
+        })
+        .filter((minutes) => minutes !== null)
+        .sort((a, b) => a - b);
+
+      const pendingSlots = reminderSlots.slice(count, Math.max(count, plannedDose || reminderSlots.length));
+      const hasMissed = pendingSlots.some((slot) => nowLogicalMinutes > (slot + snoozeAfterMinutes));
+      if (hasMissed) return 0;
+
+      const dueNow = pendingSlots.some(
+        (slot) => nowLogicalMinutes >= (slot - snoozeBeforeMinutes) && nowLogicalMinutes <= (slot + snoozeAfterMinutes)
+      );
+      if (dueNow) return 1;
+
+      if (pendingSlots.length > 0) return 2;
+      return 3;
+    };
+
+    return [...filteredMeds].sort((a, b) => {
+      const rankA = getRank(a);
+      const rankB = getRank(b);
+      if (rankA !== rankB) return rankA - rankB;
+      return String(a.name || '').localeCompare(String(b.name || ''), 'tr-TR');
+    });
+  }, [filteredMeds, medUsageCounts, activePerson?.id, logicalWeekDay, rolloverMinutes, snoozeAfterMinutes, snoozeBeforeMinutes]);
+
   const handleDeleteExpired = (medId) => {
     const pDelete = async () => {
        try {
@@ -533,9 +581,9 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         )}
 
         {/* İlaç Kartları */}
-        {filteredMeds.length === 0 ? (
+        {sortedMeds.length === 0 ? (
           <View style={styles.emptyBox}><Text style={styles.emptyText}>{t('noMedFound')}</Text></View>
-        ) : filteredMeds.map(med => {
+        ) : sortedMeds.map(med => {
           const takerId = (med.personId && med.personId !== 'all') ? med.personId : activePerson.id;
           const count = medUsageCounts[`${med.id}-${takerId}`] || 0;
           const plannedDose = parseInt(med.dailyDose, 10) || 0;
