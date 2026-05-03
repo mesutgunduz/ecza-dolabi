@@ -10,6 +10,7 @@ export const TAKE_MED_ACTION_ID = 'med-take-now';
 export const CLOSE_ACTION_ID = 'med-close';
 const MED_REMINDER_CATEGORY_ID = 'med-reminder-actions';
 const SNOOZE_STATE_KEY = 'MED_SNOOZE_STATE_V1';
+let reminderRebuildQueue = Promise.resolve();
 
 const readSnoozeState = async () => {
   try {
@@ -213,35 +214,63 @@ export const cancelAllReminderNotifications = async ({ includeSnooze = false } =
   }
 };
 
+const enqueueReminderRebuild = async (runner) => {
+  const next = reminderRebuildQueue
+    .catch(() => undefined)
+    .then(() => runner());
+  reminderRebuildQueue = next;
+  return next;
+};
+
 export const rebuildRemindersForPerson = async ({ meds, activePerson, persons = [], selectedPersonIds = [] }) => {
-  await cancelAllReminderNotifications();
+  return enqueueReminderRebuild(async () => {
+    await cancelAllReminderNotifications();
 
-  if (!Array.isArray(meds) || meds.length === 0) {
-    return { scheduledCount: 0 };
-  }
+    if (!Array.isArray(meds) || meds.length === 0) {
+      return { scheduledCount: 0 };
+    }
 
-  const targets = getTargetPersons({
-    persons,
-    selectedPersonIds,
-    fallbackPerson: activePerson,
+    const targets = getTargetPersons({
+      persons,
+      selectedPersonIds,
+      fallbackPerson: activePerson,
+    });
+
+    if (targets.length === 0) {
+      return { scheduledCount: 0 };
+    }
+
+    let scheduledCount = 0;
+    for (const person of targets) {
+      for (const med of meds) {
+        if (!isMedRelevantForPerson(med, person)) continue;
+        if (med.notificationsEnabled === false) continue;
+        if (!Array.isArray(med.reminderTimes) || med.reminderTimes.length === 0) continue;
+        await scheduleMedReminders(med, person);
+        scheduledCount += 1;
+      }
+    }
+
+    return { scheduledCount };
   });
+};
 
-  if (targets.length === 0) {
-    return { scheduledCount: 0 };
-  }
+const cancelMedRemindersForTarget = async ({ medId, targetPersonId = 'all' }) => {
+  const normalizedMedId = String(medId || '').trim();
+  const normalizedTargetId = String(targetPersonId || 'all').trim() || 'all';
+  if (!normalizedMedId) return;
 
-  let scheduledCount = 0;
-  for (const person of targets) {
-    for (const med of meds) {
-      if (!isMedRelevantForPerson(med, person)) continue;
-      if (med.notificationsEnabled === false) continue;
-      if (!Array.isArray(med.reminderTimes) || med.reminderTimes.length === 0) continue;
-      await scheduleMedReminders(med, person);
-      scheduledCount += 1;
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  for (const notif of scheduled) {
+    const source = String(notif?.content?.data?.source || '').trim();
+    if (source !== 'med-reminder') continue;
+
+    const notifMedId = String(notif?.content?.data?.medId || '').trim();
+    const notifTargetPersonId = String(notif?.content?.data?.targetPersonId || 'all').trim() || 'all';
+    if (notifMedId === normalizedMedId && notifTargetPersonId === normalizedTargetId) {
+      await Notifications.cancelScheduledNotificationAsync(notif.identifier);
     }
   }
-
-  return { scheduledCount };
 };
 
 export const scheduleMedReminders = async (med, targetPerson = null) => {
@@ -250,6 +279,11 @@ export const scheduleMedReminders = async (med, targetPerson = null) => {
   // Önce bu ilaca ait eski bildirimleri iptal et
   if (!targetPerson) {
     await cancelMedReminders(med);
+  } else {
+    await cancelMedRemindersForTarget({
+      medId: med.id,
+      targetPersonId: targetPerson?.id || med.personId || 'all',
+    });
   }
 
   const personName = String(targetPerson?.name || '').trim();
