@@ -3,8 +3,60 @@ import { db } from './firebase';
 import { collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc, query } from 'firebase/firestore';
 
 export const FAMILY_KEY = 'FAMILY_CODE';
+const OFFLINE_OPS_KEY = 'OFFLINE_PENDING_OPS_V1';
+const OFFLINE_OP_MARK_TAKEN = 'markAsTaken';
+
+let flushInProgress = false;
 
 const normalizeFamilyCode = (code) => String(code || '').trim().toUpperCase();
+
+const readPendingOps = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(OFFLINE_OPS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+};
+
+const writePendingOps = async (ops) => {
+  try {
+    await AsyncStorage.setItem(OFFLINE_OPS_KEY, JSON.stringify(Array.isArray(ops) ? ops : []));
+  } catch (_) {}
+};
+
+const isQueueableWriteError = (error) => {
+  const code = String(error?.code || '').toLowerCase();
+  if (['unavailable', 'deadline-exceeded', 'resource-exhausted', 'aborted', 'cancelled', 'internal', 'unknown'].includes(code)) {
+    return true;
+  }
+
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    message.includes('offline')
+    || message.includes('network')
+    || message.includes('internet')
+    || message.includes('timeout')
+    || message.includes('failed to get document')
+  );
+};
+
+const enqueuePendingOp = async (op) => {
+  const queue = await readPendingOps();
+  queue.push({
+    id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    createdAt: Date.now(),
+    ...op,
+  });
+  await writePendingOps(queue);
+};
+
+export const getPendingOfflineOpsCount = async () => {
+  const queue = await readPendingOps();
+  return queue.length;
+};
 
 const WRITE_RETRY_DELAYS_MS = [250, 700, 1400];
 
@@ -524,7 +576,7 @@ export const deleteLog = async (id) => {
 };
 
 // --- ACTIONS ---
-export const markAsTaken = async (medId, takerId, consumeAmt = 1, medName = null, takerName = null) => {
+const executeMarkAsTaken = async ({ medId, takerId, consumeAmt = 1, medName = null, takerName = null }) => {
   try {
     const code = await getFamilyCode();
     if (!code) throw new Error("Aile kodu bulunamadı.");
@@ -562,11 +614,65 @@ export const markAsTaken = async (medId, takerId, consumeAmt = 1, medName = null
        timestamp: now.getTime(),
        dosage: consumeAmt.toString()
     });
-    
-    return true;
+
+    return { ok: true };
   } catch (error) {
-    console.error("MarkAsTaken Error:", error);
-    return false;
+    return { ok: false, error };
+  }
+};
+
+export const markAsTaken = async (medId, takerId, consumeAmt = 1, medName = null, takerName = null) => {
+  const payload = { medId, takerId, consumeAmt, medName, takerName };
+  const result = await executeMarkAsTaken(payload);
+  if (result.ok) return true;
+
+  if (isQueueableWriteError(result.error)) {
+    await enqueuePendingOp({ type: OFFLINE_OP_MARK_TAKEN, payload });
+    return true;
+  }
+
+  console.error("MarkAsTaken Error:", result.error);
+  return false;
+};
+
+export const flushPendingOfflineOps = async () => {
+  if (flushInProgress) return { processed: 0, remaining: await getPendingOfflineOpsCount() };
+
+  flushInProgress = true;
+  let processed = 0;
+
+  try {
+    let queue = await readPendingOps();
+    while (queue.length > 0) {
+      const current = queue[0];
+
+      if (current?.type === OFFLINE_OP_MARK_TAKEN) {
+        const result = await executeMarkAsTaken(current.payload || {});
+        if (result.ok) {
+          queue.shift();
+          processed += 1;
+          await writePendingOps(queue);
+          continue;
+        }
+
+        if (isQueueableWriteError(result.error)) {
+          break;
+        }
+
+        // Non-retryable malformed op, drop it to unblock queue.
+        queue.shift();
+        await writePendingOps(queue);
+        continue;
+      }
+
+      // Unknown op type, remove to avoid deadlock.
+      queue.shift();
+      await writePendingOps(queue);
+    }
+
+    return { processed, remaining: queue.length };
+  } finally {
+    flushInProgress = false;
   }
 };
 

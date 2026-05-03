@@ -4,7 +4,7 @@ import {
   ActivityIndicator, Alert, Platform, TextInput, AppState
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds } from '../utils/storage';
+import { getMeds, getPersons, getLogs, markAsTaken, editMed, repairAllMedsData, getDayRolloverTime, getSnoozeWindowSettings, getNotificationTargetPersonIds, getPendingOfflineOpsCount } from '../utils/storage';
 import { parseRolloverToMinutes, parseClockTimeToMinutes, adjustMinutesForRollover, getLogicalDateKeyForNow, getLogicalDateKeyForLog, getLogicalNowMinutes } from '../utils/dayRollover';
 import * as Notifications from 'expo-notifications';
 import { getPersistedSnoozedReminders, scheduleReminderSnooze } from '../utils/notifications';
@@ -28,6 +28,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
   const [snoozeAfterMinutes, setSnoozeAfterMinutes] = useState(120);
   const [notificationTargetIds, setNotificationTargetIds] = useState([]);
   const [snoozedReminderByMed, setSnoozedReminderByMed] = useState({});
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   const loadSnoozedReminderState = useCallback(async () => {
     try {
@@ -72,6 +73,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       const rt = await getDayRolloverTime();
       const snoozeCfg = await getSnoozeWindowSettings();
       const targetIds = await getNotificationTargetPersonIds(activePerson?.id);
+      const pendingCount = await getPendingOfflineOpsCount();
       
       setMeds(m);
       setPersons(p);
@@ -80,6 +82,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       setSnoozeBeforeMinutes(snoozeCfg.beforeMinutes);
       setSnoozeAfterMinutes(snoozeCfg.afterMinutes);
       setNotificationTargetIds(targetIds);
+      setPendingSyncCount(pendingCount);
       await loadSnoozedReminderState();
 
       if (activePerson && !activePerson.canSeeAll) {
@@ -426,6 +429,11 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
         <View style={styles.welcomeBox}>
           <Text style={styles.welcomeTitle}>{t('hello')}, {activePerson?.name} 👋</Text>
           <Text style={styles.welcomeSub}>{t('activeMeds')}</Text>
+          <View style={[styles.syncBadge, pendingSyncCount > 0 ? styles.syncBadgePending : styles.syncBadgeOk]}>
+            <Text style={[styles.syncBadgeText, pendingSyncCount > 0 ? styles.syncBadgeTextPending : styles.syncBadgeTextOk]}>
+              {pendingSyncCount > 0 ? `${t('syncPending')}: ${pendingSyncCount}` : t('syncUpToDate')}
+            </Text>
+          </View>
         </View>
 
         {/* Arama Çubuğu */}
@@ -616,6 +624,12 @@ const styles = StyleSheet.create({
   welcomeBox: { marginBottom: 20 },
   welcomeTitle: { fontSize: 22, fontWeight: 'bold', color: '#111827' },
   welcomeSub: { fontSize: 14, color: '#6B7280' },
+  syncBadge: { alignSelf: 'flex-start', marginTop: 8, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1 },
+  syncBadgePending: { backgroundColor: '#FEF3C7', borderColor: '#F59E0B' },
+  syncBadgeOk: { backgroundColor: '#ECFDF5', borderColor: '#10B981' },
+  syncBadgeText: { fontSize: 11, fontWeight: '700' },
+  syncBadgeTextPending: { color: '#92400E' },
+  syncBadgeTextOk: { color: '#065F46' },
   alertPanel: { backgroundColor: '#EF4444', borderRadius: 16, padding: 12, marginBottom: 20 },
   alertHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   alertTitle: { color: '#fff', fontWeight: 'bold', fontSize: 12, marginLeft: 8 },

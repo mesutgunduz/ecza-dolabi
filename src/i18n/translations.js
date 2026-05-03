@@ -65,6 +65,8 @@ export const translations = {
     // Dashboard
     hello: 'Merhaba',
     activeMeds: 'Aktif ilaç listesi:',
+    syncPending: 'Senkron bekleyen',
+    syncUpToDate: 'Senkron güncel',
     searchMed: 'İlaç ara...',
     missedDose: 'Bugün kaçırılan doz:',
     expiredMedsAlert: "SKT'Sİ GEÇEN İLAÇLAR VAR!",
@@ -404,6 +406,8 @@ export const translations = {
     // Dashboard
     hello: 'Hello',
     activeMeds: 'Active medicine list:',
+    syncPending: 'Pending sync',
+    syncUpToDate: 'Sync up to date',
     searchMed: 'Search medicine...',
     missedDose: 'Missed doses today:',
     expiredMedsAlert: 'EXPIRED MEDICINES!',

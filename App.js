@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { View, ActivityIndicator, PanResponder } from 'react-native';
+import { View, ActivityIndicator, PanResponder, AppState } from 'react-native';
 import { NavigationContainer, useNavigation } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Home, Users, Pill, Clock, UserCircle, ShoppingCart } from 'lucide-react-native';
@@ -14,7 +14,7 @@ import LoginScreen from './src/screens/LoginScreen';
 import PersonSelectScreen from './src/screens/PersonSelectScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ReorderScreen from './src/screens/ReorderScreen';
-import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, getMeds, clearActivePerson, clearAllData, markAsTaken, createFamily, loginToFamily, getNotificationTargetPersonIds } from './src/utils/storage.js';
+import { getFamilyCode, setFamilyCode, getActivePerson, getPersons, getMeds, clearActivePerson, clearAllData, markAsTaken, createFamily, loginToFamily, getNotificationTargetPersonIds, flushPendingOfflineOps } from './src/utils/storage.js';
 import { LanguageProvider, useTranslation } from './src/i18n/LanguageContext';
 import {
   requestNotificationPermissions,
@@ -219,6 +219,27 @@ export default function App() {
 
     syncRemindersForActivePerson();
   }, [isAuthenticated, activePerson?.id, activePerson?.receivesNotifications, notificationTargetsRefreshKey]);
+
+  useEffect(() => {
+    const flushQueue = async () => {
+      if (!isAuthenticated) return;
+      const result = await flushPendingOfflineOps();
+      if (result?.processed > 0) {
+        setDataRefreshKey((k) => k + 1);
+      }
+    };
+
+    flushQueue();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        flushQueue();
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, [isAuthenticated, activePerson?.id]);
 
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener(async (response) => {
