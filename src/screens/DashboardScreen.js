@@ -21,7 +21,7 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
   const [persons, setPersons] = useState([]);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filterPerson, setFilterPerson] = useState('all');
+  const [filterPerson, setFilterPerson] = useState(activePerson?.id || 'all');
   const [searchQuery, setSearchQuery] = useState('');
   const [rolloverTime, setRolloverTime] = useState('00:00');
   const [snoozeBeforeMinutes, setSnoozeBeforeMinutes] = useState(60);
@@ -110,6 +110,12 @@ export default function DashboardScreen({ activePerson, dataRefreshKey = 0 }) {
       subscription.remove();
     };
   }, [loadData]);
+
+  useEffect(() => {
+    if (activePerson?.id) {
+      setFilterPerson(activePerson.id);
+    }
+  }, [activePerson?.id]);
 
   const filteredMeds = useMemo(() => {
     const searching = searchQuery.trim().length > 0;
